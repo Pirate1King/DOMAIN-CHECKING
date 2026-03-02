@@ -1,0 +1,635 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Domain Tracking Check</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap");
+      :root {
+        color-scheme: light;
+        --bg: #060b09;
+        --ink: #d6ffe9;
+        --muted: #7fd4b2;
+        --accent: #18ff86;
+        --accent-2: #12c06b;
+        --card: rgba(7, 16, 12, 0.92);
+        --border: #143a28;
+        --shadow: 0 16px 40px rgba(0, 0, 0, 0.4);
+        --grid: rgba(24, 255, 134, 0.08);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Share Tech Mono", "Consolas", monospace;
+        background:
+          linear-gradient(0deg, var(--grid) 1px, transparent 1px),
+          linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+          radial-gradient(circle at 15% 20%, rgba(24, 255, 134, 0.16), transparent 40%),
+          radial-gradient(circle at 85% 0%, rgba(24, 255, 134, 0.12), transparent 35%),
+          var(--bg);
+        background-size: 28px 28px, 28px 28px, auto, auto, auto;
+        color: var(--ink);
+      }
+      .wrap {
+        max-width: 1100px;
+        margin: 32px auto;
+        padding: 0 20px 40px;
+      }
+      header {
+        display: flex;
+        align-items: baseline;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      h1 {
+        margin: 0;
+        font-size: 28px;
+        letter-spacing: 1px;
+        text-transform: uppercase;
+      }
+      .subtitle {
+        color: var(--muted);
+      }
+      .panel {
+        margin-top: 20px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 18px;
+        box-shadow: var(--shadow);
+      }
+      textarea {
+        width: 100%;
+        min-height: 160px;
+        padding: 12px;
+        font-size: 14px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: #04110a;
+        color: var(--ink);
+        resize: vertical;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin-top: 12px;
+        flex-wrap: wrap;
+      }
+      button {
+        background: var(--accent);
+        color: #02160c;
+        border: none;
+        padding: 10px 18px;
+        border-radius: 10px;
+        font-size: 14px;
+        cursor: pointer;
+        box-shadow: 0 10px 22px rgba(24, 255, 134, 0.2);
+        text-transform: uppercase;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .hint {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .table-wrap {
+        margin-top: 16px;
+        max-height: 420px;
+        overflow: auto;
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        background: #040f0a;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        min-width: 920px;
+      }
+      th, td {
+        border: 1px solid var(--border);
+        padding: 8px 10px;
+        vertical-align: top;
+      }
+      th {
+        background: #062014;
+        text-align: left;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+      }
+      td {
+        word-break: break-word;
+        white-space: pre-wrap;
+      }
+      td[data-detail] {
+        cursor: pointer;
+        text-decoration: underline;
+        text-decoration-color: rgba(24, 255, 134, 0.35);
+      }
+      .status {
+        font-weight: 600;
+      }
+      .status.bad {
+        color: #ff5f5f;
+      }
+      .status.ok {
+        color: #34ff97;
+      }
+      .footer-note {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-top: 10px;
+      }
+      .copy-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        background: #07160f;
+        color: var(--ink);
+        cursor: pointer;
+      }
+      .copy-btn svg {
+        width: 16px;
+        height: 16px;
+        fill: var(--accent);
+      }
+      .scroll-hint {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .progress {
+        margin-top: 10px;
+        background: #04110a;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        height: 12px;
+        overflow: hidden;
+      }
+      .progress-bar {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, #18ff86, #12c06b);
+        transition: width 0.2s ease;
+      }
+      .progress-text {
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .summary-box {
+        margin-top: 10px;
+        padding: 10px 12px;
+        border: 1px dashed var(--border);
+        border-radius: 10px;
+        background: #04120c;
+        color: var(--muted);
+        font-size: 12px;
+        white-space: pre-wrap;
+      }
+      .summary-error {
+        color: #ff5f5f;
+      }
+      .tooltip {
+        position: fixed;
+        max-width: 620px;
+        padding: 10px 12px;
+        background: #02110a;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        box-shadow: 0 10px 20px rgba(0, 0, 0, 0.35);
+        color: var(--ink);
+        font-size: 12px;
+        z-index: 20;
+        display: none;
+      }
+      .tooltip-title {
+        color: var(--accent);
+        margin-bottom: 6px;
+        text-transform: uppercase;
+      }
+      .tooltip-list {
+        max-height: 240px;
+        overflow: auto;
+        padding-right: 6px;
+      }
+      .tooltip-item {
+        border: 1px solid #0f2f20;
+        border-radius: 8px;
+        padding: 6px 8px;
+        margin-bottom: 8px;
+        background: #04150e;
+        word-break: break-word;
+      }
+      .tooltip-item:last-child {
+        margin-bottom: 0;
+      }
+      .tooltip-label {
+        color: var(--muted);
+        margin-bottom: 4px;
+        font-size: 11px;
+        text-transform: uppercase;
+      }
+      .tooltip-link {
+        color: var(--ink);
+      }
+      .tooltip-meta {
+        color: var(--accent);
+        font-size: 12px;
+        margin-top: 4px;
+      }
+      .diff-highlight {
+        background: #ffe45c;
+        color: #1a1a1a;
+        padding: 0 2px;
+        border-radius: 2px;
+      }
+      .tooltip-context {
+        color: var(--muted);
+        font-size: 11px;
+        margin-top: 4px;
+      }
+      @media (max-width: 720px) {
+        h1 { font-size: 22px; }
+        table { font-size: 12px; }
+        .table-wrap { max-height: 320px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>Tracking Domain Checker</h1>
+        <div class="subtitle">Scan links containing a=mswl and flag 301/302/307/308</div>
+      </header>
+      <div class="panel">
+        <div class="hint">Paste one domain per line</div>
+        <textarea id="domains"></textarea>
+        <div class="row">
+          <button id="runBtn">Run Check</button>
+          <div id="status" class="hint"></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="hint">Results</div>
+        <div class="actions">
+          <button id="copyBtn" class="copy-btn" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M16 1H6a2 2 0 0 0-2 2v10h2V3h10V1zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H10V7h9v14z"/>
+            </svg>
+            Copy Error Summary
+          </button>
+          <button id="copyTableBtn" class="copy-btn" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 3h16a1 1 0 0 1 1 1v4h-2V5H5v14h4v2H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm6 6h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1zm1 3v2h8v-2h-8zm0 4v2h8v-2h-8z"/>
+            </svg>
+            Copy Table (Sheets)
+          </button>
+          <div class="scroll-hint"></div>
+        </div>
+        <div class="progress" aria-hidden="true">
+          <div id="progressBar" class="progress-bar"></div>
+        </div>
+        <div id="progressText" class="progress-text">Processed 0/0</div>
+        <div id="summaryBox" class="summary-box">No errors yet.</div>
+        <div id="results"></div>
+        <div class="footer-note">Tracking_error = 4xx/5xx/DNS + 301/302/307/308</div>
+      </div>
+    </div>
+    <div id="tooltip" class="tooltip" role="dialog" aria-hidden="true">
+      <div id="tooltipTitle" class="tooltip-title"></div>
+      <div id="tooltipBody" class="tooltip-list"></div>
+    </div>
+    <script>
+      const API_BASE = "";
+      const runBtn = document.getElementById("runBtn");
+      const statusEl = document.getElementById("status");
+      const resultsEl = document.getElementById("results");
+      const textarea = document.getElementById("domains");
+      const copyBtn = document.getElementById("copyBtn");
+      const copyTableBtn = document.getElementById("copyTableBtn");
+      const tooltip = document.getElementById("tooltip");
+      const tooltipTitle = document.getElementById("tooltipTitle");
+      const tooltipBody = document.getElementById("tooltipBody");
+      const progressBar = document.getElementById("progressBar");
+      const progressText = document.getElementById("progressText");
+      const summaryBox = document.getElementById("summaryBox");
+      let lastData = null;
+      let pollTimer = null;
+
+      function setStatus(text) {
+        statusEl.textContent = text;
+      }
+
+      function renderTable(header, rows) {
+        if (!rows.length) {
+          resultsEl.innerHTML = "<div class='hint'>No results.</div>";
+          return;
+        }
+        let html = "<div class='table-wrap'><table><thead><tr>";
+        for (const col of header) {
+          html += `<th>${col}</th>`;
+        }
+        html += "</tr></thead><tbody>";
+        rows.forEach((row, rowIdx) => {
+          html += "<tr>";
+          row.forEach((cell, idx) => {
+            let value = cell === null || cell === undefined ? "" : String(cell);
+            if (header[idx] === "tracking_error") {
+              const num = Number(value);
+              const klass = num === 0 ? "status ok" : "status bad";
+              html += `<td class="${klass}" data-detail="tracking_error" data-row="${rowIdx}">${value}</td>`;
+            } else if (header[idx] === "page_status") {
+              const num = Number(value);
+              const klass = num >= 200 && num < 400 ? "status ok" : "status bad";
+              html += `<td class="${klass}">${value}</td>`;
+            } else {
+              html += `<td>${value}</td>`;
+            }
+          });
+          html += "</tr>";
+        });
+        html += "</tbody></table></div>";
+        resultsEl.innerHTML = html;
+      }
+
+      function buildErrorSummary(header, rows, details) {
+        if (!rows.length) return "No results.";
+        const idxDomain = header.indexOf("domain");
+        const idxPageStatus = header.indexOf("page_status");
+        const idxTrackingError = header.indexOf("tracking_error");
+        const lines = [];
+        rows.forEach((row, rowIdx) => {
+          const pageStatus = Number(row[idxPageStatus] || 0);
+          const trackingError = Number(row[idxTrackingError] || 0);
+          if (pageStatus !== 200 || trackingError > 0) {
+            const domain = row[idxDomain];
+            const parts = [`- ${domain}`];
+            if (pageStatus !== 200) {
+              parts.push(`page_status=${pageStatus || 0}`);
+            }
+            if (trackingError > 0) {
+              parts.push(`tracking_error=${trackingError}`);
+            }
+            lines.push(parts.join(" | "));
+          }
+        });
+        return lines.length ? lines.join("\n") : "No errors found.";
+      }
+
+      runBtn.addEventListener("click", async () => {
+        const domains = parseDomains(textarea.value);
+        if (!domains.length) {
+          setStatus("Please enter at least one domain.");
+          return;
+        }
+        runBtn.disabled = true;
+        setStatus("Starting...");
+        progressBar.style.width = "0%";
+        progressText.textContent = `Processed 0/${domains.length}`;
+        resultsEl.innerHTML = "";
+        try {
+          const resp = await fetch(`${API_BASE}/run`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ domains }),
+          });
+          if (!resp.ok) {
+            throw new Error(`Server error ${resp.status}`);
+          }
+          const data = await resp.json();
+          startPolling(data.job_id);
+        } catch (err) {
+          setStatus(String(err));
+          runBtn.disabled = false;
+        } finally {
+          if (!pollTimer) {
+            runBtn.disabled = false;
+          }
+        }
+      });
+
+      copyBtn.addEventListener("click", async () => {
+        if (!lastData) {
+          setStatus("No results to copy.");
+          return;
+        }
+        const text = buildErrorSummary(lastData.header, lastData.rows, lastData.details || []);
+        try {
+          await navigator.clipboard.writeText(text);
+          setStatus("Copied error summary.");
+        } catch (err) {
+          setStatus("Copy failed: " + err);
+        }
+      });
+
+      copyTableBtn.addEventListener("click", async () => {
+        if (!lastData) {
+          setStatus("No results to copy.");
+          return;
+        }
+        const header = lastData.header || [];
+        const rows = lastData.rows || [];
+        const lines = [];
+        lines.push(header.join("\t"));
+        rows.forEach((row) => {
+          const safeRow = row.map((cell) => {
+            const value = cell === null || cell === undefined ? "" : String(cell);
+            return value.replace(/\t/g, " ").replace(/\r?\n/g, " ");
+          });
+          lines.push(safeRow.join("\t"));
+        });
+        try {
+          await navigator.clipboard.writeText(lines.join("\n"));
+          setStatus("Copied table for Sheets.");
+        } catch (err) {
+          setStatus("Copy failed: " + err);
+        }
+      });
+
+      function escapeHtml(text) {
+        return text
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function highlightDiff(original, updated) {
+        if (!original || !updated) {
+          return escapeHtml(updated || "");
+        }
+        const o = original;
+        const u = updated;
+        let start = 0;
+        while (start < o.length && start < u.length && o[start] === u[start]) {
+          start += 1;
+        }
+        let end = 0;
+        while (
+          end < o.length - start &&
+          end < u.length - start &&
+          o[o.length - 1 - end] === u[u.length - 1 - end]
+        ) {
+          end += 1;
+        }
+        const prefix = escapeHtml(u.slice(0, start));
+        const mid = escapeHtml(u.slice(start, u.length - end));
+        const suffix = escapeHtml(u.slice(u.length - end));
+        if (!mid) {
+          return escapeHtml(updated);
+        }
+        return `${prefix}<span class="diff-highlight">${mid}</span>${suffix}`;
+      }
+
+      function showTooltip(target, title, list) {
+        tooltipTitle.textContent = title;
+        if (!list.length) {
+          tooltipBody.textContent = "No link details returned. Restart the UI server and run again.";
+        } else {
+          tooltipBody.innerHTML = list.map((item, idx) => {
+            const link = escapeHtml(String(item.link || ""));
+            const reason = escapeHtml(String(item.reason || ""));
+            const rawFinal = String(item.final_url || "");
+            const finalUrl = highlightDiff(String(item.link || ""), rawFinal);
+            const context = escapeHtml(String(item.context || "no_text"));
+            return `
+              <div class="tooltip-item">
+                <div class="tooltip-label">#${idx + 1}</div>
+                <div class="tooltip-link">${link}</div>
+                <div class="tooltip-meta">${reason} -> ${finalUrl}</div>
+                <div class="tooltip-context">context: ${context}</div>
+              </div>
+            `;
+          }).join("");
+        }
+        const rect = target.getBoundingClientRect();
+        const top = Math.min(rect.bottom + 8, window.innerHeight - 260);
+        const left = Math.min(rect.left, window.innerWidth - 560);
+        tooltip.style.top = `${top}px`;
+        tooltip.style.left = `${left}px`;
+        tooltip.style.display = "block";
+        tooltip.setAttribute("aria-hidden", "false");
+      }
+
+      function hideTooltip() {
+        tooltip.style.display = "none";
+        tooltip.setAttribute("aria-hidden", "true");
+      }
+
+      resultsEl.addEventListener("mouseover", (event) => {
+        const cell = event.target.closest("td[data-detail]");
+        if (!cell || !lastData) return;
+        const rowIdx = Number(cell.dataset.row || 0);
+        const detailType = cell.dataset.detail;
+        const detail = (lastData.details || [])[rowIdx] || {};
+        const list = detail[detailType] || [];
+        const title = "Error Tracking Links";
+        showTooltip(cell, title, list);
+      });
+
+      resultsEl.addEventListener("click", (event) => {
+        const cell = event.target.closest("td[data-detail]");
+        if (!cell || !lastData) return;
+        const rowIdx = Number(cell.dataset.row || 0);
+        const detailType = cell.dataset.detail;
+        const detail = (lastData.details || [])[rowIdx] || {};
+        const list = detail[detailType] || [];
+        const title = "Error Tracking Links";
+        showTooltip(cell, title, list);
+      });
+
+      resultsEl.addEventListener("mouseout", (event) => {
+        if (event.relatedTarget && tooltip.contains(event.relatedTarget)) return;
+        hideTooltip();
+      });
+
+      tooltip.addEventListener("mouseleave", hideTooltip);
+
+      function startPolling(jobId) {
+        if (pollTimer) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+        }
+        pollTimer = setInterval(async () => {
+          try {
+            const resp = await fetch(`${API_BASE}/status?job=${jobId}`);
+            if (!resp.ok) {
+              throw new Error(`Status error ${resp.status}`);
+            }
+            const data = await resp.json();
+            lastData = data;
+            renderTable(data.header, data.rows);
+            summaryBox.innerHTML = renderSummaryBox(data.header, data.rows);
+            if (data.error) {
+              setStatus(`Error: ${data.error}`);
+              clearInterval(pollTimer);
+              pollTimer = null;
+              runBtn.disabled = false;
+              return;
+            }
+            const total = data.total || 0;
+            const done = data.rows.length || 0;
+            const pct = total ? Math.round((done / total) * 100) : 0;
+            progressBar.style.width = `${pct}%`;
+            progressText.textContent = `Processed ${done}/${total}`;
+            setStatus(`Processed ${done}/${total}`);
+            if (data.done) {
+              clearInterval(pollTimer);
+              pollTimer = null;
+              setStatus(`Done. ${data.rows.length} domains.`);
+              runBtn.disabled = false;
+            }
+          } catch (err) {
+            setStatus(String(err));
+            clearInterval(pollTimer);
+            pollTimer = null;
+            runBtn.disabled = false;
+          }
+        }, 1000);
+      }
+
+      function parseDomains(text) {
+        const lines = text.split(/\r?\n/);
+        const found = [];
+        const seen = new Set();
+        const domainRegex = /(?:^|[^A-Za-z0-9.-])([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)(?:[^A-Za-z0-9.-]|$)/g;
+        for (const line of lines) {
+          let match = null;
+          while ((match = domainRegex.exec(line)) !== null) {
+            const domain = match[1];
+            if (!seen.has(domain)) {
+              seen.add(domain);
+              found.push(domain);
+            }
+          }
+        }
+        return found;
+      }
+
+      function renderSummaryBox(header, rows) {
+        const summary = buildErrorSummary(header, rows, []);
+        if (summary === "No errors found." || summary === "No results.") {
+          return "No errors yet.";
+        }
+        return summary.split("\n").map((line) => {
+          return `<div class="summary-error">${line}</div>`;
+        }).join("");
+      }
+    </script>
+  </body>
+</html>
