@@ -541,6 +541,14 @@ def read_domains(path):
             for row in rows[1:]
         ]
         return rows, header
+    if "redirect_chain" in header:
+        drop_idx = header.index("redirect_chain")
+        header = [col for idx, col in enumerate(header) if idx != drop_idx]
+        rows = [
+            [cell for idx, cell in enumerate(row) if idx != drop_idx]
+            for row in rows[1:]
+        ]
+        return rows, header
     if "tracking_bad" in header:
         drop_idx = header.index("tracking_bad")
         header = [col for idx, col in enumerate(header) if idx != drop_idx]
@@ -573,7 +581,7 @@ def build_output_header(header):
     out_header = [
         col
         for col in header
-        if col not in ("tracking_bad_samples", "tracking_bad", "tracking_redirected")
+        if col not in ("tracking_bad_samples", "tracking_bad", "tracking_redirected", "redirect_chain")
     ]
     new_cols = [
         "page_url",
@@ -582,7 +590,6 @@ def build_output_header(header):
         "tracking_total",
         "tracking_ok",
         "tracking_error",
-        "redirect_chain",
         "notes",
     ]
     for col in new_cols:
@@ -609,7 +616,6 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
     tracking_error = 0
     bad_links = []
     ok_links = []
-    redirect_chains = []
 
     for link in tracking_links:
         result = analyze_tracking_link(link["url"])
@@ -640,8 +646,6 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
 
         if is_different_domain_redirect(link["url"], final_url):
             tracking_error += 1
-            if result.get("redirect_chain"):
-                redirect_chains.append(result["redirect_chain"])
             bad_links.append(
                 {
                     "link": link["url"],
@@ -677,7 +681,6 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
     set_col("tracking_total", tracking_total)
     set_col("tracking_ok", tracking_ok)
     set_col("tracking_error", tracking_error)
-    set_col("redirect_chain", " | ".join(redirect_chains[:5]))
     set_col("notes", ";".join(notes))
 
     detail = {

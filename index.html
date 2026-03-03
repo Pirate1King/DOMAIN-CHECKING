@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
@@ -397,6 +397,29 @@
         return `${dd}/${mm}/${yyyy}`;
       }
 
+      function hostFromUrl(rawUrl) {
+        try {
+          const u = new URL(String(rawUrl || ""));
+          return (u.hostname || "").replace(/^www\./i, "").toUpperCase();
+        } catch {
+          return "";
+        }
+      }
+
+      function collectRedirectPairs(badLinks) {
+        const pairs = [];
+        const seen = new Set();
+        (badLinks || []).forEach((item) => {
+          const fromHost = hostFromUrl(item.link);
+          const toHost = hostFromUrl(item.final_url);
+          if (!fromHost || !toHost) return;
+          const key = `${fromHost}->${toHost}`;
+          if (seen.has(key)) return;
+          seen.add(key);
+          pairs.push(`${fromHost} -> ${toHost}`);
+        });
+        return pairs;
+      }
       function buildQcLines(header, rows, details) {
         if (!rows.length) return [];
         const idxDomain = header.indexOf("domain");
@@ -415,24 +438,25 @@
 
           if (pageStatus !== 200) {
             if (pageStatus === 0) {
-              lines.push(`${domain}: KHONG TRUY CAP DUOC (${notes || "DNS/NETWORK"})`);
+              lines.push(`${domain}: kh\u00f4ng truy c\u1eadp \u0111\u01b0\u1ee3c (${notes || "dns/network"})`);
             } else {
-              lines.push(`${domain}: PAGE STATUS ${pageStatus}`);
+              lines.push(`${domain}: page status ${pageStatus}`);
             }
           }
 
           if (trackingError > 0) {
+            const pairs = collectRedirectPairs(badLinks);
+            const pairText = pairs.length ? ` (${pairs.join(", ")})` : "";
             const hasWrapped = badLinks.some((item) => String(item.context || "").includes("wrapped_from="));
             if (hasWrapped) {
-              lines.push(`${domain}: CHUA DOI LINK LASTEST (LINK DUOC BOC)`);
+              lines.push(`${domain}: b\u1ecdc link last${pairText}`);
             } else {
-              lines.push(`${domain}: CHUA DOI LINK LASTEST`);
+              lines.push(`${domain}: link last${pairText}`);
             }
           }
         });
         return lines;
       }
-
       function computeReportStats(header, rows) {
         const idxPageStatus = header.indexOf("page_status");
         const idxTrackingError = header.indexOf("tracking_error");
@@ -452,50 +476,29 @@
         const lines = buildQcLines(header, rows, details || []);
         return lines.length ? lines.join("\n") : "No errors found.";
       }
-
       function buildQcChatReport(header, rows, details) {
-        const stats = computeReportStats(header, rows);
-        const lines = [
-          `QC Report (${formatToday()})`,
-          `Total case: ${stats.total} | Pass: ${stats.pass} | Fail: ${stats.fail}`,
-        ];
+        const lines = [`QC Report (${formatToday()})`];
         const issueLines = buildQcLines(header, rows, details || []);
         if (!issueLines.length) {
-          lines.push("Khong co loi.");
+          lines.push("kh\u00f4ng c\u00f3 l\u1ed7i.");
           return lines.join("\n");
         }
         lines.push(...issueLines);
-
-        const idxDomain = header.indexOf("domain");
-        rows.forEach((row, rowIdx) => {
-          const domain = row[idxDomain];
-          const detail = details[rowIdx] || {};
-          const badLinks = detail.tracking_error || [];
-          if (!badLinks.length) return;
-          badLinks.slice(0, 10).forEach((item, idx) => {
-            lines.push(`  ${domain} [${idx + 1}] ${item.link} -> ${item.final_url}`);
-          });
-        });
         return lines.join("\n");
       }
-
       function escapeForChatHtml(text) {
         return String(text)
           .replaceAll("&", "&amp;")
           .replaceAll("<", "&lt;")
           .replaceAll(">", "&gt;");
       }
-
       function buildQcCardPayload(header, rows, details) {
         const stats = computeReportStats(header, rows);
         const issueLines = buildQcLines(header, rows, details || []);
         const maxIssueLines = 30;
         const issueText = issueLines.length
           ? issueLines.slice(0, maxIssueLines).map((line) => `- ${escapeForChatHtml(line)}`).join("<br>")
-          : "Khong co loi.";
-        const reportText = escapeForChatHtml(buildQcChatReport(header, rows, details || []))
-          .split("\n")
-          .join("<br>");
+          : "kh\u00f4ng c\u00f3 l\u1ed7i.";
 
         return {
           cardsV2: [
@@ -504,7 +507,6 @@
               card: {
                 header: {
                   title: `QC Report (${formatToday()})`,
-                  subtitle: `Total ${stats.total} | Pass ${stats.pass} | Fail ${stats.fail}`,
                 },
                 sections: [
                   {
@@ -512,7 +514,7 @@
                     widgets: [
                       {
                         textParagraph: {
-                          text: `🧪 Total case: <b>${stats.total}</b><br>✅ Pass: <b>${stats.pass}</b><br>❌ Fail: <b>${stats.fail}</b>`,
+                          text: `&#x1F9EA; Total case: <b>${stats.total}</b><br>&#x2705; Pass: <b>${stats.pass}</b><br>&#x274C; Fail: <b>${stats.fail}</b>`,
                         },
                       },
                     ],
@@ -527,23 +529,12 @@
                       },
                     ],
                   },
-                  {
-                    header: "Detail",
-                    widgets: [
-                      {
-                        textParagraph: {
-                          text: reportText,
-                        },
-                      },
-                    ],
-                  },
                 ],
               },
             },
           ],
         };
       }
-
       runBtn.addEventListener("click", async () => {
         const domains = parseDomains(textarea.value);
         if (!domains.length) {
@@ -638,7 +629,8 @@
           });
           if (!resp.ok) {
             const errText = await resp.text();
-            throw new Error(errText || `Notify error ${resp.status}`);
+            throw new Error(errText || 
+otify error ${resp.status}`);
           }
           setStatus("Sent to Google Chat.");
         } catch (err) {
@@ -822,3 +814,6 @@
     </script>
   </body>
 </html>
+
+
+
