@@ -1,10 +1,12 @@
 import csv
+import html
+import re
 import socket
 import sys
 import time
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, unquote, urljoin, urlparse
 from urllib.request import Request, build_opener, HTTPRedirectHandler
 
 
@@ -12,6 +14,28 @@ TRACKING_TOKEN = "a=mswl"
 USER_AGENT = "Mozilla/5.0 (compatible; DomainCheck/1.0)"
 TIMEOUT_SECS = 15
 MAX_REDIRECTS = 5
+MAX_WRAPPER_PROBES = 20
+WRAPPED_URL_KEYS = {
+    "url",
+    "u",
+    "target",
+    "redirect",
+    "redirect_url",
+    "redirect_uri",
+    "next",
+    "to",
+    "dest",
+    "destination",
+    "out",
+    "link",
+    "href",
+    "goto",
+    "jump",
+    "r",
+    "rd",
+    "ref",
+}
+URL_REGEX = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
 
 
 class HrefCollector(HTMLParser):
@@ -34,6 +58,7 @@ class HrefCollector(HTMLParser):
         if tag == "a":
             href = attrs_dict.get("href") or ""
             self._current = {
+                "tag": "a",
                 "href": href,
                 "text_parts": [],
                 "attrs": attrs_dict,
@@ -48,6 +73,8 @@ class HrefCollector(HTMLParser):
                 self._current["img_alts"].append(alt)
             if src:
                 self._current["img_srcs"].append(src)
+        else:
+            self._capture_non_anchor_candidate(tag, attrs_dict)
 
     def handle_endtag(self, tag):
         if self._stack:
@@ -76,7 +103,9 @@ class HrefCollector(HTMLParser):
             context.append(f"parent={parent}")
         self.links.append(
             {
+                "tag": self._current.get("tag", "a"),
                 "href": self._current["href"],
+                "attrs": dict(attrs),
                 "context": "; ".join(context) if context else "no_text",
             }
         )
@@ -100,6 +129,40 @@ class HrefCollector(HTMLParser):
                     parts.append(f".{cls_clean}")
                 return "".join(parts)
         return ""
+
+    def _capture_non_anchor_candidate(self, tag, attrs_dict):
+        if not attrs_dict:
+            return
+        has_relevant_attr = False
+        for key, value in attrs_dict.items():
+            if not value:
+                continue
+            low = str(value).lower()
+            if "http" in low or TRACKING_TOKEN in low:
+                has_relevant_attr = True
+                break
+            if key.startswith("data-") or key in ("onclick", "onmousedown"):
+                has_relevant_attr = True
+                break
+        if not has_relevant_attr:
+            return
+
+        context_parts = [f"tag={tag}"]
+        if attrs_dict.get("id"):
+            context_parts.append(f"id={attrs_dict.get('id')}")
+        if attrs_dict.get("class"):
+            context_parts.append(f"class={attrs_dict.get('class')}")
+        parent = self._find_parent_context()
+        if parent:
+            context_parts.append(f"parent={parent}")
+        self.links.append(
+            {
+                "tag": tag,
+                "href": "",
+                "attrs": dict(attrs_dict),
+                "context": "; ".join(context_parts),
+            }
+        )
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -179,30 +242,206 @@ def extract_tracking_links(html_bytes, base_url):
     parser = HrefCollector()
     parser.feed(html_text)
     links = []
+    seen = set()
+    wrapper_candidates = []
     for item in parser.links:
-        href = item.get("href", "")
-        if TRACKING_TOKEN in href.lower():
+        href = item.get("href", "") or ""
+        attrs = item.get("attrs", {}) or {}
+        candidates = [href]
+        candidates.extend(str(v) for v in attrs.values() if v)
+        for raw in candidates:
+            for found in extract_tracking_from_raw(raw, base_url):
+                key = found.lower()
+                if key in seen:
+                    continue
+                seen.add(key)
+                links.append(
+                    {
+                        "url": found,
+                        "context": item.get("context", "no_text"),
+                        "href": href,
+                    }
+                )
+        if item.get("tag") == "a" and href:
+            normalized_href = normalize_candidate_url(href, base_url)
+            if normalized_href:
+                wrapper_candidates.append(
+                    {
+                        "url": normalized_href,
+                        "context": item.get("context", "no_text"),
+                        "href": href,
+                    }
+                )
+
+    probes = 0
+    for cand in wrapper_candidates:
+        if probes >= MAX_WRAPPER_PROBES:
+            break
+        if TRACKING_TOKEN in cand["url"].lower():
+            continue
+        if not is_likely_wrapper_candidate(cand):
+            continue
+        probes += 1
+        wrapped_links = discover_wrapped_tracking_links(cand["url"])
+        for found in wrapped_links:
+            key = found.lower()
+            if key in seen:
+                continue
+            seen.add(key)
             links.append(
                 {
-                    "url": urljoin(base_url, href),
-                    "context": item.get("context", "no_text"),
-                    "href": href,
+                    "url": found,
+                    "context": f"{cand['context']}; wrapped_from={cand['url']}",
+                    "href": cand.get("href", ""),
                 }
             )
     return links
 
 
+def is_likely_wrapper_candidate(item):
+    url = (item.get("url") or "").lower()
+    context = (item.get("context") or "").lower()
+    if TRACKING_TOKEN in url:
+        return False
+    hints = (
+        "dang-ky",
+        "dangky",
+        "register",
+        "signup",
+        "sign-up",
+        "login",
+        "banner",
+        "cta",
+        "button",
+    )
+    for token in hints:
+        if token in url or token in context:
+            return True
+    return False
+
+
+def discover_wrapped_tracking_links(url):
+    found = []
+
+    no_redirect = fetch_url(url, allow_redirects=False)
+    loc = (no_redirect.get("location") or "").strip()
+    if loc:
+        loc_abs = urljoin(url, loc)
+        found.extend(extract_tracking_from_raw(loc_abs, url))
+
+    followed = fetch_url(url, allow_redirects=True)
+    final_url = (followed.get("final_url") or "").strip()
+    if final_url:
+        found.extend(extract_tracking_from_raw(final_url, url))
+
+    body = followed.get("body") or b""
+    if body:
+        try:
+            text = body.decode("utf-8", errors="ignore")
+        except Exception:
+            text = ""
+        if text:
+            found.extend(extract_tracking_from_raw(text, url))
+
+    out = []
+    seen = set()
+    for val in found:
+        key = val.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(val)
+    return out
+
+
+def extract_tracking_from_raw(raw_value, base_url):
+    if not raw_value:
+        return []
+    text = html.unescape(str(raw_value))
+    candidates = []
+    if text:
+        candidates.append(text.strip())
+    candidates.extend(URL_REGEX.findall(text))
+
+    results = []
+    visited = set()
+    queue = [c for c in candidates if c]
+    while queue:
+        current = queue.pop(0).strip()
+        if not current or current in visited:
+            continue
+        visited.add(current)
+
+        normalized = normalize_candidate_url(current, base_url)
+        if not normalized:
+            continue
+
+        if TRACKING_TOKEN in normalized.lower():
+            results.append(normalized)
+
+        try:
+            parsed = urlparse(normalized)
+        except Exception:
+            continue
+        if parsed.scheme not in ("http", "https"):
+            continue
+
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+            if key.lower() not in WRAPPED_URL_KEYS and TRACKING_TOKEN not in value.lower():
+                continue
+            decoded = value
+            for _ in range(2):
+                decoded_next = unquote(decoded)
+                if decoded_next == decoded:
+                    break
+                decoded = decoded_next
+            decoded = html.unescape(decoded).strip()
+            if not decoded:
+                continue
+            queue.append(decoded)
+            queue.extend(URL_REGEX.findall(decoded))
+
+    return results
+
+
+def normalize_candidate_url(raw, base_url):
+    value = html.unescape(str(raw).strip())
+    if not value:
+        return ""
+    if value.startswith(("javascript:", "mailto:", "tel:", "#")):
+        return ""
+    if value.startswith("//"):
+        parsed_base = urlparse(base_url)
+        scheme = parsed_base.scheme or "https"
+        return f"{scheme}:{value}"
+    parsed = urlparse(value)
+    if parsed.scheme in ("http", "https"):
+        return value
+    if value.startswith("/"):
+        return urljoin(base_url, value)
+    return ""
+
+
 def follow_redirects(url):
     current = url
+    chain = []
     for _ in range(MAX_REDIRECTS):
         result = fetch_url(current, allow_redirects=False)
         status = result["status"]
         location = result["location"]
         if status in (301, 302, 303, 307, 308) and location:
-            current = urljoin(current, location)
+            next_url = urljoin(current, location)
+            chain.append((status, current, next_url))
+            current = next_url
             continue
-        return result, current
-    return {"status": 0, "final_url": current, "body": b"", "error": "too many redirects", "location": ""}, current
+        return result, current, chain
+    return {
+        "status": 0,
+        "final_url": current,
+        "body": b"",
+        "error": "too many redirects",
+        "location": "",
+    }, current, chain
 
 
 def check_tracking_link(url):
@@ -225,19 +464,31 @@ def analyze_tracking_link(url):
     initial_status = initial["status"]
     location = initial["location"]
     if initial_status in (301, 302, 303, 307, 308) and location:
-        final_result, final_url = follow_redirects(url)
+        final_result, final_url, chain = follow_redirects(url)
         return {
             "is_redirect": True,
             "initial_status": initial_status,
             "final_status": final_result["status"],
             "final_url": final_url,
+            "redirect_chain": format_redirect_chain(chain, final_result["status"], final_url),
         }
     return {
         "is_redirect": False,
         "initial_status": initial_status,
         "final_status": initial_status,
         "final_url": url,
+        "redirect_chain": "",
     }
+
+
+def format_redirect_chain(chain, final_status, final_url):
+    if not chain:
+        return ""
+    parts = []
+    for status, from_url, to_url in chain:
+        parts.append(f"{from_url} --{status}--> {to_url}")
+    parts.append(f"{final_url} --{final_status}--> END")
+    return " || ".join(parts)
 
 
 def is_scheme_only_change(original_url, final_url):
@@ -331,6 +582,7 @@ def build_output_header(header):
         "tracking_total",
         "tracking_ok",
         "tracking_error",
+        "redirect_chain",
         "notes",
     ]
     for col in new_cols:
@@ -357,6 +609,7 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
     tracking_error = 0
     bad_links = []
     ok_links = []
+    redirect_chains = []
 
     for link in tracking_links:
         result = analyze_tracking_link(link["url"])
@@ -387,6 +640,8 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
 
         if is_different_domain_redirect(link["url"], final_url):
             tracking_error += 1
+            if result.get("redirect_chain"):
+                redirect_chains.append(result["redirect_chain"])
             bad_links.append(
                 {
                     "link": link["url"],
@@ -422,6 +677,7 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
     set_col("tracking_total", tracking_total)
     set_col("tracking_ok", tracking_ok)
     set_col("tracking_error", tracking_error)
+    set_col("redirect_chain", " | ".join(redirect_chains[:5]))
     set_col("notes", ";".join(notes))
 
     detail = {
