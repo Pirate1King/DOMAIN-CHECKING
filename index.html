@@ -449,9 +449,9 @@
             const pairText = pairs.length ? ` (${pairs.join(", ")})` : "";
             const hasWrapped = badLinks.some((item) => String(item.context || "").includes("wrapped_from="));
             if (hasWrapped) {
-              lines.push(`${domain}: link lastest được bọc${pairText}`);
+              lines.push(`${domain}: Bọc link lastest${pairText}`);
             } else {
-              lines.push(`${domain}: link lastest${pairText}`);
+              lines.push(`${domain}: Link lastest${pairText}`);
             }
           }
         });
@@ -813,5 +813,4 @@
     </script>
   </body>
 </html>
-
 
