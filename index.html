@@ -449,12 +449,71 @@
             const pairText = pairs.length ? ` (${pairs.join(", ")})` : "";
             const hasWrapped = badLinks.some((item) => String(item.context || "").includes("wrapped_from="));
             if (hasWrapped) {
-              lines.push(`${domain}: Bọc link lastest${pairText}`);
+              lines.push(`${domain}: Link lastest (bọc link)${pairText}`);
             } else {
               lines.push(`${domain}: Link lastest${pairText}`);
             }
           }
         });
+        return lines;
+      }
+
+      function buildGroupedIssues(header, rows, details) {
+        const idxDomain = header.indexOf("domain");
+        const idxPageStatus = header.indexOf("page_status");
+        const idxTrackingError = header.indexOf("tracking_error");
+        const idxNotes = header.indexOf("notes");
+        const groups = {
+          access: [],
+          latest: [],
+          wrapped: [],
+        };
+
+        rows.forEach((row, rowIdx) => {
+          const domain = row[idxDomain];
+          const pageStatus = Number(row[idxPageStatus] || 0);
+          const trackingError = Number(row[idxTrackingError] || 0);
+          const notes = String(row[idxNotes] || "");
+          const detail = details[rowIdx] || {};
+          const badLinks = detail.tracking_error || [];
+
+          if (pageStatus !== 200) {
+            if (pageStatus === 0) {
+              groups.access.push(`${domain}: không truy cập được (${notes || "dns/network"})`);
+            } else {
+              groups.access.push(`${domain}: page status ${pageStatus}`);
+            }
+          }
+
+          if (trackingError > 0) {
+            const pairs = collectRedirectPairs(badLinks);
+            const pairText = pairs.length ? ` (${pairs.join(", ")})` : "";
+            const hasWrapped = badLinks.some((item) => String(item.context || "").includes("wrapped_from="));
+            if (hasWrapped) {
+              groups.wrapped.push(`${domain}: Link lastest (bọc link)${pairText}`);
+            } else {
+              groups.latest.push(`${domain}: Link lastest${pairText}`);
+            }
+          }
+        });
+
+        return groups;
+      }
+
+      function groupedIssuesToLines(groups) {
+        const lines = [];
+        if (groups.access.length) {
+          lines.push("[Lỗi truy cập domain]");
+          groups.access.forEach((item) => lines.push(`- ${item}`));
+        }
+        if (groups.latest.length) {
+          lines.push("[Chưa đổi domain link]");
+          groups.latest.forEach((item) => lines.push(`- ${item}`));
+        }
+        if (groups.wrapped.length) {
+          lines.push("[Chưa đổi domain link (bọc link)]");
+          groups.wrapped.forEach((item) => lines.push(`- ${item}`));
+        }
         return lines;
       }
       function computeReportStats(header, rows) {
@@ -473,12 +532,14 @@
       }
 
       function buildErrorSummary(header, rows, details) {
-        const lines = buildQcLines(header, rows, details || []);
+        const groups = buildGroupedIssues(header, rows, details || []);
+        const lines = groupedIssuesToLines(groups);
         return lines.length ? lines.join("\n") : "No errors found.";
       }
       function buildQcChatReport(header, rows, details) {
         const lines = [`QC Report (${formatToday()})`];
-        const issueLines = buildQcLines(header, rows, details || []);
+        const groups = buildGroupedIssues(header, rows, details || []);
+        const issueLines = groupedIssuesToLines(groups);
         if (!issueLines.length) {
           lines.push("không có lỗi.");
           return lines.join("\n");
@@ -494,11 +555,32 @@
       }
       function buildQcCardPayload(header, rows, details) {
         const stats = computeReportStats(header, rows);
-        const issueLines = buildQcLines(header, rows, details || []);
-        const maxIssueLines = 30;
-        const issueText = issueLines.length
-          ? issueLines.slice(0, maxIssueLines).map((line) => `- ${escapeForChatHtml(line)}`).join("<br>")
-          : "không có lỗi.";
+        const groups = buildGroupedIssues(header, rows, details || []);
+        const groupSections = [];
+        if (groups.access.length) {
+          groupSections.push({
+            header: "Lỗi truy cập domain",
+            widgets: [{ textParagraph: { text: groups.access.map((line) => `- ${escapeForChatHtml(line)}`).join("<br>") } }],
+          });
+        }
+        if (groups.latest.length) {
+          groupSections.push({
+            header: "Chưa đổi domain link",
+            widgets: [{ textParagraph: { text: groups.latest.map((line) => `- ${escapeForChatHtml(line)}`).join("<br>") } }],
+          });
+        }
+        if (groups.wrapped.length) {
+          groupSections.push({
+            header: "Chưa đổi domain link (bọc link)",
+            widgets: [{ textParagraph: { text: groups.wrapped.map((line) => `- ${escapeForChatHtml(line)}`).join("<br>") } }],
+          });
+        }
+        if (!groupSections.length) {
+          groupSections.push({
+            header: "Issues",
+            widgets: [{ textParagraph: { text: "không có lỗi." } }],
+          });
+        }
 
         return {
           cardsV2: [
@@ -519,16 +601,7 @@
                       },
                     ],
                   },
-                  {
-                    header: "Issues",
-                    widgets: [
-                      {
-                        textParagraph: {
-                          text: issueText,
-                        },
-                      },
-                    ],
-                  },
+                  ...groupSections,
                 ],
               },
             },
@@ -813,4 +886,3 @@
     </script>
   </body>
 </html>
-
