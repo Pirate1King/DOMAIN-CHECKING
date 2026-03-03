@@ -404,28 +404,159 @@
         resultsEl.innerHTML = html;
       }
 
-      function buildErrorSummary(header, rows, details) {
-        if (!rows.length) return "No results.";
+      function formatToday() {
+        const d = new Date();
+        const dd = String(d.getDate()).padStart(2, "0");
+        const mm = String(d.getMonth() + 1).padStart(2, "0");
+        const yyyy = d.getFullYear();
+        return `${dd}/${mm}/${yyyy}`;
+      }
+
+      function buildQcLines(header, rows, details) {
+        if (!rows.length) return [];
         const idxDomain = header.indexOf("domain");
         const idxPageStatus = header.indexOf("page_status");
         const idxTrackingError = header.indexOf("tracking_error");
+        const idxNotes = header.indexOf("notes");
         const lines = [];
+
         rows.forEach((row, rowIdx) => {
+          const domain = row[idxDomain];
+          const pageStatus = Number(row[idxPageStatus] || 0);
+          const trackingError = Number(row[idxTrackingError] || 0);
+          const notes = String(row[idxNotes] || "");
+          const detail = details[rowIdx] || {};
+          const badLinks = detail.tracking_error || [];
+
+          if (pageStatus !== 200) {
+            if (pageStatus === 0) {
+              lines.push(`${domain}: KHONG TRUY CAP DUOC (${notes || "DNS/NETWORK"})`);
+            } else {
+              lines.push(`${domain}: PAGE STATUS ${pageStatus}`);
+            }
+          }
+
+          if (trackingError > 0) {
+            const hasWrapped = badLinks.some((item) => String(item.context || "").includes("wrapped_from="));
+            if (hasWrapped) {
+              lines.push(`${domain}: CHUA DOI LINK LASTEST (LINK DUOC BOC)`);
+            } else {
+              lines.push(`${domain}: CHUA DOI LINK LASTEST`);
+            }
+          }
+        });
+        return lines;
+      }
+
+      function computeReportStats(header, rows) {
+        const idxPageStatus = header.indexOf("page_status");
+        const idxTrackingError = header.indexOf("tracking_error");
+        const total = rows.length;
+        let fail = 0;
+        rows.forEach((row) => {
           const pageStatus = Number(row[idxPageStatus] || 0);
           const trackingError = Number(row[idxTrackingError] || 0);
           if (pageStatus !== 200 || trackingError > 0) {
-            const domain = row[idxDomain];
-            const parts = [`- ${domain}`];
-            if (pageStatus !== 200) {
-              parts.push(`page_status=${pageStatus || 0}`);
-            }
-            if (trackingError > 0) {
-              parts.push(`tracking_error=${trackingError}`);
-            }
-            lines.push(parts.join(" | "));
+            fail += 1;
           }
         });
+        return { total, fail, pass: Math.max(0, total - fail) };
+      }
+
+      function buildErrorSummary(header, rows, details) {
+        const lines = buildQcLines(header, rows, details || []);
         return lines.length ? lines.join("\n") : "No errors found.";
+      }
+
+      function buildQcChatReport(header, rows, details) {
+        const stats = computeReportStats(header, rows);
+        const lines = [
+          `QC Report (${formatToday()})`,
+          `Total case: ${stats.total} | Pass: ${stats.pass} | Fail: ${stats.fail}`,
+        ];
+        const issueLines = buildQcLines(header, rows, details || []);
+        if (!issueLines.length) {
+          lines.push("Khong co loi.");
+          return lines.join("\n");
+        }
+        lines.push(...issueLines);
+
+        const idxDomain = header.indexOf("domain");
+        rows.forEach((row, rowIdx) => {
+          const domain = row[idxDomain];
+          const detail = details[rowIdx] || {};
+          const badLinks = detail.tracking_error || [];
+          if (!badLinks.length) return;
+          badLinks.slice(0, 10).forEach((item, idx) => {
+            lines.push(`  ${domain} [${idx + 1}] ${item.link} -> ${item.final_url}`);
+          });
+        });
+        return lines.join("\n");
+      }
+
+      function escapeForChatHtml(text) {
+        return String(text)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;");
+      }
+
+      function buildQcCardPayload(header, rows, details) {
+        const stats = computeReportStats(header, rows);
+        const issueLines = buildQcLines(header, rows, details || []);
+        const maxIssueLines = 30;
+        const issueText = issueLines.length
+          ? issueLines.slice(0, maxIssueLines).map((line) => `- ${escapeForChatHtml(line)}`).join("<br>")
+          : "Khong co loi.";
+        const reportText = escapeForChatHtml(buildQcChatReport(header, rows, details || []))
+          .split("\n")
+          .join("<br>");
+
+        return {
+          cardsV2: [
+            {
+              cardId: "qc-report",
+              card: {
+                header: {
+                  title: `QC Report (${formatToday()})`,
+                  subtitle: `Total ${stats.total} | Pass ${stats.pass} | Fail ${stats.fail}`,
+                },
+                sections: [
+                  {
+                    header: "Summary",
+                    widgets: [
+                      {
+                        textParagraph: {
+                          text: `🧪 Total case: <b>${stats.total}</b><br>✅ Pass: <b>${stats.pass}</b><br>❌ Fail: <b>${stats.fail}</b>`,
+                        },
+                      },
+                    ],
+                  },
+                  {
+                    header: "Issues",
+                    widgets: [
+                      {
+                        textParagraph: {
+                          text: issueText,
+                        },
+                      },
+                    ],
+                  },
+                  {
+                    header: "Detail",
+                    widgets: [
+                      {
+                        textParagraph: {
+                          text: reportText,
+                        },
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          ],
+        };
       }
 
       runBtn.addEventListener("click", async () => {
@@ -511,11 +642,8 @@
           setStatus("Enter Google Chat webhook URL.");
           return;
         }
-        const message = buildErrorSummary(lastData.header, lastData.rows, lastData.details || []);
-        if (!message || message === "No errors found." || message === "No results.") {
-          setStatus("No error summary to send.");
-          return;
-        }
+        const message = buildQcChatReport(lastData.header, lastData.rows, lastData.details || []);
+        const chatPayload = buildQcCardPayload(lastData.header, lastData.rows, lastData.details || []);
         try {
           const resp = await fetch(`${API_BASE}/notify`, {
             method: "POST",
@@ -523,6 +651,7 @@
             body: JSON.stringify({
               webhook_url: webhook,
               message,
+              chat_payload: chatPayload,
             }),
           });
           if (!resp.ok) {
@@ -649,7 +778,7 @@
             const data = await resp.json();
             lastData = data;
             renderTable(data.header, data.rows);
-            summaryBox.innerHTML = renderSummaryBox(data.header, data.rows);
+            summaryBox.innerHTML = renderSummaryBox(data.header, data.rows, data.details || []);
             if (data.error) {
               setStatus(`Error: ${data.error}`);
               clearInterval(pollTimer);
@@ -696,14 +825,17 @@
         return found;
       }
 
-      function renderSummaryBox(header, rows) {
-        const summary = buildErrorSummary(header, rows, []);
+      function renderSummaryBox(header, rows, details) {
+        const summary = buildErrorSummary(header, rows, details || []);
+        const stats = computeReportStats(header, rows);
+        const statLine = `<div>Total case: ${stats.total} | Pass: ${stats.pass} | Fail: ${stats.fail}</div>`;
         if (summary === "No errors found." || summary === "No results.") {
-          return "No errors yet.";
+          return `${statLine}<div>No errors yet.</div>`;
         }
-        return summary.split("\n").map((line) => {
+        const issues = summary.split("\n").map((line) => {
           return `<div class="summary-error">${line}</div>`;
         }).join("");
+        return `${statLine}${issues}`;
       }
     </script>
   </body>

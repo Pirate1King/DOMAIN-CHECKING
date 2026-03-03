@@ -73,17 +73,19 @@ class Handler(BaseHTTPRequestHandler):
 
         webhook_url = str(payload.get("webhook_url", "")).strip()
         message = str(payload.get("message", "")).strip()
-        if not webhook_url or not message:
-            self._send(400, "Missing webhook_url or message", "text/plain; charset=utf-8")
+        chat_payload = payload.get("chat_payload")
+        if not webhook_url or (not message and not isinstance(chat_payload, dict)):
+            self._send(400, "Missing webhook_url and content", "text/plain; charset=utf-8")
             return
         if not webhook_url.startswith("https://chat.googleapis.com/"):
             self._send(400, "Invalid Google Chat webhook URL", "text/plain; charset=utf-8")
             return
 
+        outgoing = chat_payload if isinstance(chat_payload, dict) else {"text": message}
         try:
             req = Request(
                 webhook_url,
-                data=json.dumps({"text": message}).encode("utf-8"),
+                data=json.dumps(outgoing).encode("utf-8"),
                 headers={"Content-Type": "application/json; charset=UTF-8"},
                 method="POST",
             )
