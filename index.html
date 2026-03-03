@@ -629,8 +629,7 @@
           });
           if (!resp.ok) {
             const errText = await resp.text();
-            throw new Error(errText || 
-otify error ${resp.status}`);
+            throw new Error(errText || `Notify error ${resp.status}`);
           }
           setStatus("Sent to Google Chat.");
         } catch (err) {
