@@ -298,6 +298,18 @@
         font-size: 12px;
         margin-top: 4px;
       }
+      .tooltip-open-link {
+        display: inline-block;
+        margin-top: 6px;
+        margin-bottom: 4px;
+        color: #7fffd4;
+        text-decoration: underline;
+        text-decoration-color: #0dbd83;
+        font-size: 12px;
+      }
+      .tooltip-open-link:hover {
+        color: #baffea;
+      }
       .tooltip-path {
         color: var(--ink);
         font-size: 11px;
@@ -866,7 +878,24 @@
         return `${prefix}<span class="diff-highlight">${mid}</span>${suffix}`;
       }
 
-      function showTooltip(target, title, subtitle, list) {
+      function extractContextValue(context, key) {
+        const text = String(context || "");
+        const m = text.match(new RegExp(`${key}=([^;]+)`));
+        return m ? m[1].trim() : "";
+      }
+
+      function buildLocateUrl(pageUrl, context) {
+        const base = String(pageUrl || "").split("#")[0].trim();
+        if (!base) return "";
+        const textValue = extractContextValue(context, "text");
+        if (!textValue) return base;
+        const compact = textValue.replace(/\s+/g, " ").trim();
+        if (!compact) return base;
+        const snippet = compact.slice(0, 80);
+        return `${base}#:~:text=${encodeURIComponent(snippet)}`;
+      }
+
+      function showTooltip(target, title, subtitle, list, pageUrlForLocate) {
         if (activeDetailCell) {
           activeDetailCell.classList.remove("active-detail-cell");
         }
@@ -892,6 +921,10 @@
             const context = escapeHtml(String(item.context || "no_text"));
             const sourceUrl = escapeHtml(String(item.source_url || item.link || ""));
             const wrappedFrom = escapeHtml(String(item.wrapped_from || ""));
+            const locateUrl = buildLocateUrl(pageUrlForLocate, String(item.context || ""));
+            const locateButton = locateUrl
+              ? `<a class="tooltip-open-link" href="${escapeHtml(locateUrl)}" target="_blank" rel="noopener noreferrer">Go to vi tri</a>`
+              : "";
             const pathLine = wrappedFrom
               ? `<div class="path-grid">
                   <div class="path-row"><div class="path-label">1. Link tracking</div><div class="path-value">${link}</div></div>
@@ -907,6 +940,7 @@
               <div class="tooltip-item">
                 <div class="tooltip-label">#${idx + 1}</div>
                 <div class="tooltip-meta">Status: ${reason}</div>
+                ${locateButton}
                 ${pathLine}
                 <div class="tooltip-context">context: ${context}</div>
               </div>
@@ -951,8 +985,13 @@
         const rows = lastData.rows || [];
         const domainIdx = header.indexOf("domain");
         const domain = domainIdx >= 0 && rows[rowIdx] ? rows[rowIdx][domainIdx] : "";
+        const pageFinalIdx = header.indexOf("page_final_url");
+        const pageUrlIdx = header.indexOf("page_url");
+        const pageUrlForLocate =
+          (pageFinalIdx >= 0 && rows[rowIdx] ? rows[rowIdx][pageFinalIdx] : "") ||
+          (pageUrlIdx >= 0 && rows[rowIdx] ? rows[rowIdx][pageUrlIdx] : "");
         const subtitle = `Row ${rowIdx + 1}${domain ? ` • ${domain}` : ""}`;
-        showTooltip(cell, title, subtitle, list);
+        showTooltip(cell, title, subtitle, list, pageUrlForLocate);
       });
       tooltipClose.addEventListener("click", hideTooltip);
 
