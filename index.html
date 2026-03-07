@@ -1141,10 +1141,13 @@
             }
             const total = data.total || 0;
             const done = data.rows.length || 0;
+            const started = Number(data.started || 0);
             const pct = total ? Math.round((done / total) * 100) : 0;
             progressBar.style.width = `${pct}%`;
-            progressText.textContent = `Processed ${done}/${total}`;
-            setStatus(`Processed ${done}/${total}`);
+            const runningText = started > done ? ` | Running ${started}/${total}` : "";
+            const currentDomainText = data.current_domain ? ` | ${data.current_domain}` : "";
+            progressText.textContent = `Processed ${done}/${total}${runningText}`;
+            setStatus(`Processed ${done}/${total}${runningText}${currentDomainText}`);
             if (data.done) {
               clearInterval(pollTimer);
               pollTimer = null;

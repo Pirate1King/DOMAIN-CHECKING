@@ -123,6 +123,8 @@ class Handler(BaseHTTPRequestHandler):
                 "rows": job["rows"],
                 "details": job["details"],
                 "total": job["total"],
+                "started": job.get("started", 0),
+                "current_domain": job.get("current_domain", ""),
                 "done": job["done"],
                 "error": job["error"],
             }
@@ -162,6 +164,8 @@ def start_job(domains, ignore_https_redirect=False):
             "rows": [],
             "details": [],
             "total": len(domains),
+            "started": 0,
+            "current_domain": "",
             "done": False,
             "error": "",
             "ignore_https_redirect": ignore_https_redirect,
@@ -177,9 +181,15 @@ def start_job(domains, ignore_https_redirect=False):
 def run_job(job_id, domains, ignore_https_redirect=False):
     header = build_output_header(["domain"])
     try:
-        for domain in domains:
+        for idx, domain in enumerate(domains):
             if not domain:
                 continue
+            with JOBS_LOCK:
+                job = JOBS.get(job_id)
+                if not job:
+                    return
+                job["started"] = idx + 1
+                job["current_domain"] = domain
             row, detail = process_domain(
                 domain, header, ignore_https_redirect=ignore_https_redirect
             )
@@ -192,6 +202,7 @@ def run_job(job_id, domains, ignore_https_redirect=False):
         with JOBS_LOCK:
             job = JOBS.get(job_id)
             if job:
+                job["current_domain"] = ""
                 job["done"] = True
     except Exception as exc:
         with JOBS_LOCK:

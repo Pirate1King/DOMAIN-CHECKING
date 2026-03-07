@@ -14,7 +14,8 @@ TRACKING_TOKEN = "a=mswl"
 USER_AGENT = "Mozilla/5.0 (compatible; DomainCheck/1.0)"
 TIMEOUT_SECS = 15
 MAX_REDIRECTS = 5
-MAX_WRAPPER_PROBES = 80
+MAX_WRAPPER_PROBES = 30
+WRAPPER_TIMEOUT_SECS = 6
 PAGE_RETRY_DELAY_SECS = 0.6
 WRAPPED_URL_KEYS = {
     "url",
@@ -193,18 +194,18 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-def _open_url(url, allow_redirects=True):
+def _open_url(url, allow_redirects=True, timeout_secs=TIMEOUT_SECS):
     handlers = []
     if not allow_redirects:
         handlers.append(NoRedirect())
     opener = build_opener(*handlers)
     req = Request(url, headers={"User-Agent": USER_AGENT})
-    return opener.open(req, timeout=TIMEOUT_SECS)
+    return opener.open(req, timeout=timeout_secs)
 
 
-def fetch_url(url, allow_redirects=True):
+def fetch_url(url, allow_redirects=True, timeout_secs=TIMEOUT_SECS):
     try:
-        resp = _open_url(url, allow_redirects=allow_redirects)
+        resp = _open_url(url, allow_redirects=allow_redirects, timeout_secs=timeout_secs)
         status = resp.getcode()
         final_url = resp.geturl()
         body = resp.read()
@@ -477,7 +478,7 @@ def is_same_host(base_url, candidate_url):
 def discover_wrapped_tracking_links(url):
     found = []
 
-    no_redirect = fetch_url(url, allow_redirects=False)
+    no_redirect = fetch_url(url, allow_redirects=False, timeout_secs=WRAPPER_TIMEOUT_SECS)
     loc = (no_redirect.get("location") or "").strip()
     if loc:
         loc_abs = urljoin(url, loc)
@@ -490,7 +491,7 @@ def discover_wrapped_tracking_links(url):
                 }
             )
 
-    followed = fetch_url(url, allow_redirects=True)
+    followed = fetch_url(url, allow_redirects=True, timeout_secs=WRAPPER_TIMEOUT_SECS)
     final_url = (followed.get("final_url") or "").strip()
     if final_url:
         for tracking_url in extract_tracking_from_raw(final_url, url):
