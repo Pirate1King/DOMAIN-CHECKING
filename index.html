@@ -558,7 +558,7 @@
           if (trackingError > 0) {
             const pairs = collectRedirectPairs(badLinks);
             const pairText = pairs.length ? ` (${pairs.join(", ")})` : "";
-            const hasWrapped = badLinks.some((item) => String(item.context || "").includes("wrapped_from="));
+            const hasWrapped = badLinks.some((item) => String(item.wrapped_from || "").trim());
             if (hasWrapped) {
               lines.push(`${domain}: Link lastest (bọc link)${pairText}`);
             } else {
@@ -610,7 +610,7 @@
 
             const pairs = collectRedirectPairs(nonHttpsBadLinks);
             const pairText = pairs.length ? ` (${pairs.join(", ")})` : "";
-            const hasWrapped = nonHttpsBadLinks.some((item) => String(item.context || "").includes("wrapped_from="));
+            const hasWrapped = nonHttpsBadLinks.some((item) => String(item.wrapped_from || "").trim());
             if (hasWrapped) {
               groups.wrapped.push(`${domain}${pairText}`);
             } else {
@@ -921,7 +921,10 @@
             const context = escapeHtml(String(item.context || "no_text"));
             const sourceUrl = escapeHtml(String(item.source_url || item.link || ""));
             const wrappedFrom = escapeHtml(String(item.wrapped_from || ""));
-            const locateUrl = buildLocateUrl(pageUrlForLocate, String(item.context || ""));
+            const subpageFromRaw = String(item.subpage_from || "");
+            const subpageFrom = escapeHtml(subpageFromRaw);
+            const locateBaseUrl = subpageFromRaw || pageUrlForLocate;
+            const locateUrl = buildLocateUrl(locateBaseUrl, String(item.context || ""));
             const locateButton = locateUrl
               ? `<a class="tooltip-open-link" href="${escapeHtml(locateUrl)}" target="_blank" rel="noopener noreferrer">Go to vi tri</a>`
               : "";
@@ -935,6 +938,7 @@
               : `<div class="path-grid">
                   <div class="path-row"><div class="path-label">1. Link tracking</div><div class="path-value">${link}</div></div>
                   <div class="path-row"><div class="path-label">2. Link cuoi</div><div class="path-value">${finalUrl}</div></div>
+                  ${subpageFrom ? `<div class="path-row"><div class="path-label">Trang con</div><div class="path-value">${subpageFrom}</div></div>` : ""}
                 </div>`;
             return `
               <div class="tooltip-item">

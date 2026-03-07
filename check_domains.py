@@ -333,10 +333,18 @@ def extract_tracking_links(html_bytes, base_url):
             continue
         probes += 1
         wrapped_links = discover_wrapped_tracking_links(cand["url"])
-        for found in wrapped_links:
+        for wrapped_item in wrapped_links:
+            found = wrapped_item.get("url", "")
+            via_type = wrapped_item.get("via_type", "")
+            subpage_from = wrapped_item.get("subpage_from", "")
+            context_suffix = f"; wrapped_from={cand['url']}"
+            wrapped_from = cand.get("url", "")
+            if via_type == "subpage_direct":
+                context_suffix = f"; subpage_from={subpage_from or cand['url']}"
+                wrapped_from = ""
             key = (
                 found.lower(),
-                f"{cand['context']}; wrapped_from={cand['url']}",
+                f"{cand['context']}{context_suffix}",
                 (cand.get("href", "") or "").strip(),
             )
             if key in seen:
@@ -345,10 +353,11 @@ def extract_tracking_links(html_bytes, base_url):
             links.append(
                 {
                     "url": found,
-                    "context": f"{cand['context']}; wrapped_from={cand['url']}",
+                    "context": f"{cand['context']}{context_suffix}",
                     "href": cand.get("href", ""),
                     "source_url": cand.get("url", ""),
-                    "wrapped_from": cand.get("url", ""),
+                    "wrapped_from": wrapped_from,
+                    "subpage_from": subpage_from,
                 }
             )
     return links
@@ -471,12 +480,26 @@ def discover_wrapped_tracking_links(url):
     loc = (no_redirect.get("location") or "").strip()
     if loc:
         loc_abs = urljoin(url, loc)
-        found.extend(extract_tracking_from_raw(loc_abs, url))
+        for tracking_url in extract_tracking_from_raw(loc_abs, url):
+            found.append(
+                {
+                    "url": tracking_url,
+                    "via_type": "wrapped_redirect",
+                    "subpage_from": "",
+                }
+            )
 
     followed = fetch_url(url, allow_redirects=True)
     final_url = (followed.get("final_url") or "").strip()
     if final_url:
-        found.extend(extract_tracking_from_raw(final_url, url))
+        for tracking_url in extract_tracking_from_raw(final_url, url):
+            found.append(
+                {
+                    "url": tracking_url,
+                    "via_type": "wrapped_redirect",
+                    "subpage_from": "",
+                }
+            )
 
     body = followed.get("body") or b""
     if body:
@@ -485,16 +508,26 @@ def discover_wrapped_tracking_links(url):
         except Exception:
             text = ""
         if text:
-            found.extend(extract_tracking_from_raw(text, url))
+            for tracking_url in extract_tracking_from_raw(text, url):
+                found.append(
+                    {
+                        "url": tracking_url,
+                        "via_type": "subpage_direct",
+                        "subpage_from": final_url or url,
+                    }
+                )
 
     out = []
     seen = set()
-    for val in found:
-        key = val.lower()
+    for item in found:
+        val = item.get("url", "")
+        via_type = item.get("via_type", "")
+        subpage_from = item.get("subpage_from", "")
+        key = (val.lower(), via_type, subpage_from.lower())
         if key in seen:
             continue
         seen.add(key)
-        out.append(val)
+        out.append(item)
     return out
 
 
@@ -778,6 +811,7 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
                     "context": link.get("context", "no_text"),
                     "source_url": link.get("source_url", ""),
                     "wrapped_from": link.get("wrapped_from", ""),
+                    "subpage_from": link.get("subpage_from", ""),
                 }
             )
             continue
@@ -795,6 +829,7 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
                         "context": link.get("context", "no_text"),
                         "source_url": link.get("source_url", ""),
                         "wrapped_from": link.get("wrapped_from", ""),
+                        "subpage_from": link.get("subpage_from", ""),
                         "error_type": "",
                     }
                 )
@@ -808,6 +843,7 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
                     "context": link.get("context", "no_text"),
                     "source_url": link.get("source_url", ""),
                     "wrapped_from": link.get("wrapped_from", ""),
+                    "subpage_from": link.get("subpage_from", ""),
                     "error_type": "missing_https",
                 }
             )
@@ -823,6 +859,7 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
                     "context": link.get("context", "no_text"),
                     "source_url": link.get("source_url", ""),
                     "wrapped_from": link.get("wrapped_from", ""),
+                    "subpage_from": link.get("subpage_from", ""),
                     "error_type": "domain_redirect",
                 }
             )
@@ -836,6 +873,7 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
                     "context": link.get("context", "no_text"),
                     "source_url": link.get("source_url", ""),
                     "wrapped_from": link.get("wrapped_from", ""),
+                    "subpage_from": link.get("subpage_from", ""),
                     "error_type": "",
                 }
             )
