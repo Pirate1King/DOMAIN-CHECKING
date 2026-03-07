@@ -227,10 +227,29 @@
         z-index: 20;
         display: none;
       }
+      .tooltip-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
       .tooltip-title {
         color: var(--accent);
-        margin-bottom: 6px;
         text-transform: uppercase;
+      }
+      .tooltip-close {
+        border: 1px solid var(--border);
+        background: #04150e;
+        color: var(--ink);
+        border-radius: 6px;
+        font-size: 11px;
+        padding: 4px 8px;
+        cursor: pointer;
+      }
+      .active-detail-cell {
+        outline: 2px solid var(--accent);
+        outline-offset: -2px;
       }
       .tooltip-list {
         max-height: 240px;
@@ -327,7 +346,10 @@
       </div>
     </div>
     <div id="tooltip" class="tooltip" role="dialog" aria-hidden="true">
-      <div id="tooltipTitle" class="tooltip-title"></div>
+      <div class="tooltip-head">
+        <div id="tooltipTitle" class="tooltip-title"></div>
+        <button id="tooltipClose" class="tooltip-close" type="button">Close</button>
+      </div>
       <div id="tooltipBody" class="tooltip-list"></div>
     </div>
     <script>
@@ -343,17 +365,23 @@
       const tooltip = document.getElementById("tooltip");
       const tooltipTitle = document.getElementById("tooltipTitle");
       const tooltipBody = document.getElementById("tooltipBody");
+      const tooltipClose = document.getElementById("tooltipClose");
       const progressBar = document.getElementById("progressBar");
       const progressText = document.getElementById("progressText");
       const summaryBox = document.getElementById("summaryBox");
       let lastData = null;
       let pollTimer = null;
+      let activeDetailCell = null;
 
       function setStatus(text) {
         statusEl.textContent = text;
       }
 
       function renderTable(header, rows) {
+        const prevWrap = resultsEl.querySelector(".table-wrap");
+        const prevScrollTop = prevWrap ? prevWrap.scrollTop : 0;
+        const prevScrollLeft = prevWrap ? prevWrap.scrollLeft : 0;
+
         if (!rows.length) {
           resultsEl.innerHTML = "<div class='hint'>No results.</div>";
           return;
@@ -387,6 +415,11 @@
         });
         html += "</tbody></table></div>";
         resultsEl.innerHTML = html;
+        const nextWrap = resultsEl.querySelector(".table-wrap");
+        if (nextWrap) {
+          nextWrap.scrollTop = prevScrollTop;
+          nextWrap.scrollLeft = prevScrollLeft;
+        }
       }
 
       function formatToday() {
@@ -768,6 +801,11 @@
       }
 
       function showTooltip(target, title, list) {
+        if (activeDetailCell) {
+          activeDetailCell.classList.remove("active-detail-cell");
+        }
+        activeDetailCell = target;
+        activeDetailCell.classList.add("active-detail-cell");
         tooltipTitle.textContent = title;
         if (!list.length) {
           tooltipBody.textContent = "No link details returned. Restart the UI server and run again.";
@@ -800,22 +838,24 @@
       function hideTooltip() {
         tooltip.style.display = "none";
         tooltip.setAttribute("aria-hidden", "true");
+        if (activeDetailCell) {
+          activeDetailCell.classList.remove("active-detail-cell");
+          activeDetailCell = null;
+        }
       }
-
-      resultsEl.addEventListener("mouseover", (event) => {
-        const cell = event.target.closest("td[data-detail]");
-        if (!cell || !lastData) return;
-        const rowIdx = Number(cell.dataset.row || 0);
-        const detailType = cell.dataset.detail;
-        const detail = (lastData.details || [])[rowIdx] || {};
-        const list = detail[detailType] || [];
-        const title = detailType === "tracking_ok" ? "OK Tracking Links" : "Error Tracking Links";
-        showTooltip(cell, title, list);
-      });
 
       resultsEl.addEventListener("click", (event) => {
         const cell = event.target.closest("td[data-detail]");
-        if (!cell || !lastData) return;
+        if (!cell || !lastData) {
+          if (!tooltip.contains(event.target)) {
+            hideTooltip();
+          }
+          return;
+        }
+        if (activeDetailCell === cell) {
+          hideTooltip();
+          return;
+        }
         const rowIdx = Number(cell.dataset.row || 0);
         const detailType = cell.dataset.detail;
         const detail = (lastData.details || [])[rowIdx] || {};
@@ -823,13 +863,7 @@
         const title = detailType === "tracking_ok" ? "OK Tracking Links" : "Error Tracking Links";
         showTooltip(cell, title, list);
       });
-
-      resultsEl.addEventListener("mouseout", (event) => {
-        if (event.relatedTarget && tooltip.contains(event.relatedTarget)) return;
-        hideTooltip();
-      });
-
-      tooltip.addEventListener("mouseleave", hideTooltip);
+      tooltipClose.addEventListener("click", hideTooltip);
 
       function startPolling(jobId) {
         if (pollTimer) {

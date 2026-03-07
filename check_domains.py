@@ -15,6 +15,7 @@ USER_AGENT = "Mozilla/5.0 (compatible; DomainCheck/1.0)"
 TIMEOUT_SECS = 15
 MAX_REDIRECTS = 5
 MAX_WRAPPER_PROBES = 20
+PAGE_RETRY_DELAY_SECS = 0.6
 WRAPPED_URL_KEYS = {
     "url",
     "u",
@@ -234,6 +235,18 @@ def fetch_homepage(domain):
     }
 
 
+def fetch_homepage_with_retry(domain):
+    first = fetch_homepage(domain)
+    if first["status"] == 200:
+        return first
+    # Retry once for non-200 to reduce false alarms from transient responses.
+    time.sleep(PAGE_RETRY_DELAY_SECS)
+    second = fetch_homepage(domain)
+    if second["status"] == 200:
+        return second
+    return second
+
+
 def extract_tracking_links(html_bytes, base_url):
     try:
         html_text = html_bytes.decode("utf-8", errors="ignore")
@@ -251,7 +264,11 @@ def extract_tracking_links(html_bytes, base_url):
         candidates.extend(str(v) for v in attrs.values() if v)
         for raw in candidates:
             for found in extract_tracking_from_raw(raw, base_url):
-                key = found.lower()
+                key = (
+                    found.lower(),
+                    (item.get("context", "") or "").strip(),
+                    (href or "").strip(),
+                )
                 if key in seen:
                     continue
                 seen.add(key)
@@ -284,7 +301,11 @@ def extract_tracking_links(html_bytes, base_url):
         probes += 1
         wrapped_links = discover_wrapped_tracking_links(cand["url"])
         for found in wrapped_links:
-            key = found.lower()
+            key = (
+                found.lower(),
+                f"{cand['context']}; wrapped_from={cand['url']}",
+                (cand.get("href", "") or "").strip(),
+            )
             if key in seen:
                 continue
             seen.add(key)
@@ -599,7 +620,7 @@ def build_output_header(header):
 
 
 def process_domain(domain, out_header, ignore_https_redirect=False):
-    page = fetch_homepage(domain)
+    page = fetch_homepage_with_retry(domain)
     page_status = page["status"]
     page_url = page.get("page_url", "")
     page_final = page.get("final_url", "")
@@ -616,9 +637,14 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
     tracking_error = 0
     bad_links = []
     ok_links = []
+    analyzed_cache = {}
 
     for link in tracking_links:
-        result = analyze_tracking_link(link["url"])
+        cached = analyzed_cache.get(link["url"])
+        if cached is None:
+            cached = analyze_tracking_link(link["url"])
+            analyzed_cache[link["url"]] = cached
+        result = dict(cached)
         if not result["is_redirect"]:
             tracking_ok += 1
             ok_links.append(
