@@ -281,6 +281,11 @@
         font-size: 12px;
         margin-top: 4px;
       }
+      .tooltip-path {
+        color: var(--ink);
+        font-size: 11px;
+        margin-top: 4px;
+      }
       .diff-highlight {
         background: #ffe45c;
         color: #1a1a1a;
@@ -816,11 +821,16 @@
             const rawFinal = String(item.final_url || "");
             const finalUrl = highlightDiff(String(item.link || ""), rawFinal);
             const context = escapeHtml(String(item.context || "no_text"));
+            const sourceUrl = escapeHtml(String(item.source_url || item.link || ""));
+            const wrappedFrom = escapeHtml(String(item.wrapped_from || ""));
+            const pathLine = wrappedFrom
+              ? `<div class="tooltip-path">UI: ${sourceUrl}<br>Trung gian: ${wrappedFrom}<br>Link tracking: ${link}<br>Link cuoi: ${finalUrl}</div>`
+              : `<div class="tooltip-path">UI: ${sourceUrl}<br>Link tracking: ${link}<br>Link cuoi: ${finalUrl}</div>`;
             return `
               <div class="tooltip-item">
                 <div class="tooltip-label">#${idx + 1}</div>
-                <div class="tooltip-link">${link}</div>
                 <div class="tooltip-meta">${reason} -> ${finalUrl}</div>
+                ${pathLine}
                 <div class="tooltip-context">context: ${context}</div>
               </div>
             `;

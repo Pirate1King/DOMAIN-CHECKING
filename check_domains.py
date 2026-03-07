@@ -277,6 +277,8 @@ def extract_tracking_links(html_bytes, base_url):
                         "url": found,
                         "context": item.get("context", "no_text"),
                         "href": href,
+                        "source_url": normalize_candidate_url(href, base_url),
+                        "wrapped_from": "",
                     }
                 )
         if item.get("tag") == "a" and href:
@@ -314,6 +316,8 @@ def extract_tracking_links(html_bytes, base_url):
                     "url": found,
                     "context": f"{cand['context']}; wrapped_from={cand['url']}",
                     "href": cand.get("href", ""),
+                    "source_url": cand.get("url", ""),
+                    "wrapped_from": cand.get("url", ""),
                 }
             )
     return links
@@ -653,6 +657,8 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
                     "reason": str(result["initial_status"]),
                     "final_url": result["final_url"],
                     "context": link.get("context", "no_text"),
+                    "source_url": link.get("source_url", ""),
+                    "wrapped_from": link.get("wrapped_from", ""),
                 }
             )
             continue
@@ -668,6 +674,8 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
                         "reason": f"{result['initial_status']}-> {result['final_status']} (scheme-only)",
                         "final_url": final_url,
                         "context": link.get("context", "no_text"),
+                        "source_url": link.get("source_url", ""),
+                        "wrapped_from": link.get("wrapped_from", ""),
                         "error_type": "",
                     }
                 )
@@ -679,6 +687,8 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
                     "reason": f"{result['initial_status']}-> {result['final_status']} (thieu-https)",
                     "final_url": final_url,
                     "context": link.get("context", "no_text"),
+                    "source_url": link.get("source_url", ""),
+                    "wrapped_from": link.get("wrapped_from", ""),
                     "error_type": "missing_https",
                 }
             )
@@ -692,6 +702,8 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
                     "reason": f"{result['initial_status']}-> {result['final_status']}",
                     "final_url": final_url,
                     "context": link.get("context", "no_text"),
+                    "source_url": link.get("source_url", ""),
+                    "wrapped_from": link.get("wrapped_from", ""),
                     "error_type": "domain_redirect",
                 }
             )
@@ -703,6 +715,8 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
                     "reason": f"{result['initial_status']}-> {result['final_status']} (same-domain)",
                     "final_url": final_url,
                     "context": link.get("context", "no_text"),
+                    "source_url": link.get("source_url", ""),
+                    "wrapped_from": link.get("wrapped_from", ""),
                     "error_type": "",
                 }
             )
