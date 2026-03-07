@@ -14,7 +14,7 @@ TRACKING_TOKEN = "a=mswl"
 USER_AGENT = "Mozilla/5.0 (compatible; DomainCheck/1.0)"
 TIMEOUT_SECS = 15
 MAX_REDIRECTS = 5
-MAX_WRAPPER_PROBES = 20
+MAX_WRAPPER_PROBES = 80
 PAGE_RETRY_DELAY_SECS = 0.6
 WRAPPED_URL_KEYS = {
     "url",
@@ -37,6 +37,27 @@ WRAPPED_URL_KEYS = {
     "ref",
 }
 URL_REGEX = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
+STATIC_EXTENSIONS = (
+    ".css",
+    ".js",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".svg",
+    ".webp",
+    ".ico",
+    ".pdf",
+    ".zip",
+    ".rar",
+    ".7z",
+    ".mp4",
+    ".mp3",
+    ".woff",
+    ".woff2",
+    ".ttf",
+    ".eot",
+)
 
 
 class HrefCollector(HTMLParser):
@@ -257,6 +278,7 @@ def extract_tracking_links(html_bytes, base_url):
     links = []
     seen = set()
     wrapper_candidates = []
+    wrapper_seen = set()
     for item in parser.links:
         href = item.get("href", "") or ""
         attrs = item.get("attrs", {}) or {}
@@ -281,24 +303,33 @@ def extract_tracking_links(html_bytes, base_url):
                         "wrapped_from": "",
                     }
                 )
-        if item.get("tag") == "a" and href:
-            normalized_href = normalize_candidate_url(href, base_url)
-            if normalized_href:
+            for candidate_url in extract_url_candidates(raw, base_url):
+                if not is_likely_wrapper_candidate(candidate_url, item, base_url):
+                    continue
+                key = (
+                    candidate_url.lower(),
+                    (item.get("context", "no_text") or "").strip(),
+                    (href or "").strip(),
+                )
+                if key in wrapper_seen:
+                    continue
+                wrapper_seen.add(key)
                 wrapper_candidates.append(
                     {
-                        "url": normalized_href,
+                        "url": candidate_url,
                         "context": item.get("context", "no_text"),
                         "href": href,
+                        "score": wrapper_candidate_score(candidate_url, item, base_url),
                     }
                 )
+
+    wrapper_candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
 
     probes = 0
     for cand in wrapper_candidates:
         if probes >= MAX_WRAPPER_PROBES:
             break
         if TRACKING_TOKEN in cand["url"].lower():
-            continue
-        if not is_likely_wrapper_candidate(cand):
             continue
         probes += 1
         wrapped_links = discover_wrapped_tracking_links(cand["url"])
@@ -323,11 +354,44 @@ def extract_tracking_links(html_bytes, base_url):
     return links
 
 
-def is_likely_wrapper_candidate(item):
-    url = (item.get("url") or "").lower()
+def extract_url_candidates(raw, base_url):
+    text = html.unescape(str(raw or "")).strip()
+    if not text:
+        return []
+    candidates = [text]
+    candidates.extend(URL_REGEX.findall(text))
+    out = []
+    seen = set()
+    for val in candidates:
+        normalized = normalize_candidate_url(val, base_url)
+        if not normalized:
+            continue
+        key = normalized.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(normalized)
+    return out
+
+
+def is_likely_wrapper_candidate(candidate_url, item, base_url):
+    url = (candidate_url or "").lower()
     context = (item.get("context") or "").lower()
+    href = (item.get("href") or "").lower()
     if TRACKING_TOKEN in url:
         return False
+    parsed = urlparse(candidate_url)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    if parsed.fragment:
+        return False
+    path = (parsed.path or "").lower()
+    if path and any(path.endswith(ext) for ext in STATIC_EXTENSIONS):
+        return False
+
+    if is_same_host(base_url, candidate_url):
+        return True
+
     hints = (
         "dang-ky",
         "dangky",
@@ -338,11 +402,66 @@ def is_likely_wrapper_candidate(item):
         "banner",
         "cta",
         "button",
+        "redirect",
+        "out",
+        "goto",
+        "jump",
+        "click",
+        "ref",
     )
     for token in hints:
-        if token in url or token in context:
+        if token in url or token in context or token in href:
             return True
+
+    if any(key + "=" in url for key in WRAPPED_URL_KEYS):
+        return True
+    if "%2f%2f" in url or "http%3a" in url or "https%3a" in url:
+        return True
     return False
+
+
+def wrapper_candidate_score(candidate_url, item, base_url):
+    score = 0
+    url = (candidate_url or "").lower()
+    context = (item.get("context") or "").lower()
+    href = (item.get("href") or "").lower()
+
+    if is_same_host(base_url, candidate_url):
+        score += 10
+
+    strong_tokens = (
+        "dang-ky",
+        "register",
+        "signup",
+        "login",
+        "cta",
+        "banner",
+        "button",
+        "redirect",
+        "out",
+        "goto",
+        "jump",
+        "click",
+    )
+    for token in strong_tokens:
+        if token in url:
+            score += 4
+        if token in context:
+            score += 2
+        if token in href:
+            score += 1
+
+    if any(key + "=" in url for key in WRAPPED_URL_KEYS):
+        score += 5
+    if "%2f%2f" in url or "http%3a" in url or "https%3a" in url:
+        score += 5
+    return score
+
+
+def is_same_host(base_url, candidate_url):
+    src = _normalize_host(base_url)
+    dst = _normalize_host(candidate_url)
+    return bool(src and dst and src == dst)
 
 
 def discover_wrapped_tracking_links(url):
