@@ -167,6 +167,7 @@
         display: flex;
         gap: 10px;
         align-items: center;
+        flex-wrap: wrap;
         margin-top: 10px;
       }
       .filter-select {
@@ -405,6 +406,39 @@
         h1 { font-size: 22px; }
         table { font-size: 12px; }
         .table-wrap { max-height: 320px; }
+        .wrap {
+          padding: 0 12px 28px;
+        }
+        .panel {
+          padding: 12px;
+        }
+        .row {
+          align-items: stretch;
+        }
+        .row > button,
+        .row > .toggle,
+        .row > .hint {
+          flex: 1 1 100%;
+        }
+        .actions {
+          gap: 8px;
+          align-items: stretch;
+        }
+        .actions .copy-btn,
+        .actions .filter-select {
+          flex: 1 1 calc(50% - 8px);
+          min-width: 0;
+        }
+        .actions .copy-btn {
+          justify-content: center;
+        }
+        .actions .webhook-input {
+          flex: 1 1 100%;
+          min-width: 0;
+        }
+        .webhook-input {
+          min-width: 0;
+        }
         .tooltip {
           top: 72px;
           right: 8px;
