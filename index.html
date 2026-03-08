@@ -249,6 +249,10 @@
         color: var(--muted);
         font-size: 12px;
       }
+      .filter-help {
+        color: var(--muted);
+        font-size: 11px;
+      }
       .summary-box {
         margin-top: 10px;
         padding: 10px 12px;
@@ -519,12 +523,13 @@
             Send To Google Chat
           </button>
           <select id="errorFilter" class="filter-select" title="Filter rows (multi-select)" multiple size="5">
-            <option value="tracking_error">Có tracking_error</option>
-            <option value="wrapped">Bọc link</option>
-            <option value="subpage">Trang con</option>
-            <option value="access_error">Lỗi truy cập domain</option>
-            <option value="missing_https">Lỗi thiếu s trong https</option>
+            <option value="tracking_error">Lỗi tracking (tất cả)</option>
+            <option value="wrapped">Link bọc chưa đổi domain mới</option>
+            <option value="subpage">Link nằm ở trang con</option>
+            <option value="access_error">Domain không truy cập được</option>
+            <option value="missing_https">Thiếu https (http bị redirect)</option>
           </select>
+          <span class="filter-help">Giữ Ctrl/Cmd để chọn nhiều</span>
           <div class="scroll-hint"></div>
         </div>
         <div class="actions">
