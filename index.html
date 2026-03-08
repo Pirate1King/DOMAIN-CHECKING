@@ -191,6 +191,53 @@
         color: var(--muted);
         font-size: 12px;
       }
+      .help-wrap {
+        margin-top: 8px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 12px;
+        position: relative;
+      }
+      .help-icon {
+        width: 18px;
+        height: 18px;
+        border-radius: 999px;
+        border: 1px solid #1d6a49;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: #7fffd4;
+        background: #07160f;
+        cursor: pointer;
+        font-size: 12px;
+        line-height: 1;
+        user-select: none;
+      }
+      .help-tooltip {
+        display: none;
+        position: absolute;
+        left: 0;
+        top: calc(100% + 8px);
+        z-index: 7;
+        width: min(560px, calc(100vw - 40px));
+        border: 1px solid #1d6a49;
+        border-radius: 10px;
+        background: #07160f;
+        color: var(--ink);
+        padding: 10px 12px;
+        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35);
+        white-space: normal;
+      }
+      .help-wrap:hover .help-tooltip,
+      .help-wrap:focus-within .help-tooltip {
+        display: block;
+      }
+      .help-tooltip ul {
+        margin: 0;
+        padding-left: 16px;
+      }
       .actions {
         display: flex;
         gap: 10px;
@@ -597,7 +644,20 @@
         <div id="progressText" class="progress-text">Processed 0/0</div>
         <div id="summaryBox" class="summary-box">No errors yet.</div>
         <div id="results"></div>
-        <div class="footer-note">Tracking_error = redirect 301/302/307/308 sang domain khac</div>
+        <div class="help-wrap">
+          <span class="help-icon" tabindex="0" aria-label="Giải thích lỗi">i</span>
+          <span>Giải thích lỗi detect</span>
+          <div class="help-tooltip" role="tooltip">
+            <ul>
+              <li><b>Domain không truy cập được</b>: trang trả về 0, 4xx/5xx, DNS hoặc timeout.</li>
+              <li><b>Lỗi tracking (tracking_error)</b>: link tracking redirect 301/302/307/308 sang domain khác.</li>
+              <li><b>Thiếu https</b>: link http bị redirect sang cùng link https.</li>
+              <li><b>Link bọc chưa đổi domain mới</b>: link trên UI đi qua link trung gian rồi mới ra tracking cũ.</li>
+              <li><b>Link nằm ở trang con</b>: từ link nội bộ vào trang con và phát hiện tracking lỗi trong trang đó.</li>
+              <li><b>No tracking links</b>: domain vào được nhưng không tìm thấy link chứa <code>a=mswl</code>.</li>
+            </ul>
+          </div>
+        </div>
       </div>
     </div>
     <div id="tooltip" class="tooltip" role="dialog" aria-hidden="true">
