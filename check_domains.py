@@ -15,6 +15,7 @@ USER_AGENT = "Mozilla/5.0 (compatible; DomainCheck/1.0)"
 TIMEOUT_SECS = 15
 MAX_REDIRECTS = 5
 MAX_WRAPPER_PROBES = 20
+MAX_WRAPPER_PROBES_SUBPAGE = 80
 WRAPPER_TIMEOUT_SECS = 6
 PAGE_RETRY_DELAY_SECS = 0.6
 WRAPPED_URL_KEYS = {
@@ -372,8 +373,9 @@ def extract_tracking_links(html_bytes, base_url, scan_subpages=False):
         return links
 
     probes = 0
+    probe_limit = MAX_WRAPPER_PROBES_SUBPAGE if scan_subpages else MAX_WRAPPER_PROBES
     for cand in wrapper_candidates:
-        if probes >= MAX_WRAPPER_PROBES:
+        if probes >= probe_limit:
             break
         if TRACKING_TOKEN in cand["url"].lower():
             continue
