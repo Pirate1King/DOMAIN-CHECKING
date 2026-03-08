@@ -245,68 +245,6 @@
         flex-wrap: wrap;
         margin-top: 10px;
       }
-      .filter-dropdown {
-        position: relative;
-        min-width: 260px;
-      }
-      .filter-dropdown.is-disabled {
-        opacity: 0.45;
-        pointer-events: none;
-      }
-      .filter-trigger {
-        background: #07160f;
-        color: var(--ink);
-        border: 1px solid #1d6a49;
-        border-radius: 8px;
-        padding: 8px 10px;
-        font-family: "Share Tech Mono", "Consolas", monospace;
-        font-size: 12px;
-        min-width: 260px;
-        box-shadow: inset 0 0 0 1px rgba(24, 255, 134, 0.12);
-        cursor: pointer;
-        list-style: none;
-        user-select: none;
-      }
-      .filter-trigger::-webkit-details-marker {
-        display: none;
-      }
-      .filter-trigger::after {
-        content: "▾";
-        float: right;
-        color: var(--muted);
-      }
-      .filter-dropdown[open] .filter-trigger::after {
-        content: "▴";
-      }
-      .filter-trigger:focus {
-        outline: none;
-        border-color: var(--accent);
-        box-shadow: 0 0 0 2px rgba(24, 255, 134, 0.18);
-      }
-      .filter-menu {
-        position: absolute;
-        top: calc(100% + 6px);
-        left: 0;
-        z-index: 6;
-        min-width: 280px;
-        max-width: min(360px, 90vw);
-        padding: 8px;
-        border-radius: 10px;
-        border: 1px solid #1d6a49;
-        background: #07160f;
-        box-shadow: 0 14px 32px rgba(0, 0, 0, 0.35);
-      }
-      .filter-item {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 6px 6px;
-        color: var(--ink);
-        font-size: 12px;
-      }
-      .filter-item input {
-        accent-color: var(--accent);
-      }
       .copy-btn {
         display: inline-flex;
         align-items: center;
@@ -552,22 +490,12 @@
           gap: 8px;
           align-items: stretch;
         }
-        .actions .copy-btn,
-        .actions .filter-dropdown {
+        .actions .copy-btn {
           flex: 1 1 calc(50% - 8px);
           min-width: 0;
         }
         .actions .copy-btn {
           justify-content: center;
-        }
-        .filter-trigger {
-          min-width: 0;
-          width: 100%;
-        }
-        .filter-menu {
-          min-width: 0;
-          width: 100%;
-          max-width: 100%;
         }
         .actions .webhook-input {
           flex: 1 1 100%;
@@ -620,16 +548,6 @@
           <button id="sendChatBtn" class="copy-btn" type="button">
             Send To Google Chat
           </button>
-          <details id="filterDropdown" class="filter-dropdown">
-            <summary id="filterSummary" class="filter-trigger">Filter: Tất cả</summary>
-            <div class="filter-menu">
-              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="all" checked>Tất cả</label>
-              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="tracking_error">Tracking lỗi</label>
-              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="wrapped">Bọc link</label>
-              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="subpage">Trang con</label>
-              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="access_error">Lỗi truy cập</label>
-            </div>
-          </details>
           <div class="scroll-hint"></div>
         </div>
         <div class="actions">
@@ -685,9 +603,6 @@
       const progressBar = document.getElementById("progressBar");
       const progressText = document.getElementById("progressText");
       const summaryBox = document.getElementById("summaryBox");
-      const filterDropdown = document.getElementById("filterDropdown");
-      const filterSummary = document.getElementById("filterSummary");
-      const errorFilterCheckboxes = Array.from(document.querySelectorAll(".error-filter-checkbox"));
       let lastData = null;
       let pollTimer = null;
       let activeDetailCell = null;
@@ -697,67 +612,7 @@
         statusEl.textContent = text;
       }
 
-      function setFilterEnabled(enabled) {
-        if (!filterDropdown) return;
-        if (enabled) {
-          filterDropdown.classList.remove("is-disabled");
-        } else {
-          filterDropdown.classList.add("is-disabled");
-          filterDropdown.removeAttribute("open");
-        }
-      }
-
-      function updateFilterSummaryText() {
-        if (!filterSummary) return;
-        const selectedLabels = errorFilterCheckboxes
-          .filter((cb) => cb.checked)
-          .map((cb) => {
-            const label = cb.parentElement;
-            if (!label) return cb.value;
-            return (label.textContent || "").trim();
-          });
-        filterSummary.textContent = selectedLabels.length
-          ? `Filter: ${selectedLabels.length} mục`
-          : "Filter: Tất cả";
-      }
-
-      function getSelectedFilters() {
-        return errorFilterCheckboxes.filter((cb) => cb.checked).map((cb) => cb.value);
-      }
-
-      function getFilteredRowsAndIndexes(header, rows, details) {
-        const selected = getSelectedFilters();
-        const sourceRows = rows || [];
-        if (!sourceRows.length || !selected.length || selected.includes("all")) {
-          return { rows: sourceRows, indexes: sourceRows.map((_, idx) => idx) };
-        }
-        const idxPageStatus = header.indexOf("page_status");
-        const idxTrackingError = header.indexOf("tracking_error");
-        const viewRows = [];
-        const indexes = [];
-        sourceRows.forEach((row, idx) => {
-          const pageStatus = Number(row[idxPageStatus] || 0);
-          const trackingError = Number(row[idxTrackingError] || 0);
-          const detail = (details || [])[idx] || {};
-          const badLinks = detail.tracking_error || [];
-          const hasWrapped = badLinks.some((item) => String(item.wrapped_from || "").trim());
-          const hasSubpage = badLinks.some((item) => String(item.subpage_from || "").trim() && !String(item.wrapped_from || "").trim());
-          const keep = selected.some((filter) => {
-            if (filter === "tracking_error") return trackingError > 0;
-            if (filter === "wrapped") return hasWrapped;
-            if (filter === "subpage") return hasSubpage;
-            if (filter === "access_error") return pageStatus !== 200;
-            return false;
-          });
-          if (keep) {
-            viewRows.push(row);
-            indexes.push(idx);
-          }
-        });
-        return { rows: viewRows, indexes };
-      }
-
-      function renderTable(header, rows, sourceIndexes) {
+      function renderTable(header, rows) {
         const prevWrap = resultsEl.querySelector(".table-wrap");
         const prevScrollTop = prevWrap ? prevWrap.scrollTop : 0;
         const prevScrollLeft = prevWrap ? prevWrap.scrollLeft : 0;
@@ -775,7 +630,7 @@
         const idxTrackingError = header.indexOf("tracking_error");
         const idxNotes = header.indexOf("notes");
         rows.forEach((row, rowIdx) => {
-          const sourceRowIdx = Array.isArray(sourceIndexes) ? sourceIndexes[rowIdx] : rowIdx;
+          const sourceRowIdx = rowIdx;
           const pageStatusVal = idxPageStatus >= 0 ? Number(row[idxPageStatus] || 0) : 0;
           const trackingErrorVal = idxTrackingError >= 0 ? Number(row[idxTrackingError] || 0) : 0;
           const notesVal = idxNotes >= 0 ? String(row[idxNotes] || "").toLowerCase() : "";
@@ -1080,7 +935,6 @@
           return;
         }
         runBtn.disabled = true;
-        setFilterEnabled(false);
         setStatus("Starting...");
         progressBar.style.width = "0%";
         progressText.textContent = `Processed 0/${domains.length}`;
@@ -1333,12 +1187,6 @@
         }
       });
 
-      document.addEventListener("click", (event) => {
-        if (!filterDropdown || !filterDropdown.hasAttribute("open")) return;
-        if (filterDropdown.contains(event.target)) return;
-        filterDropdown.removeAttribute("open");
-      });
-
       function startPolling(jobId) {
         if (pollTimer) {
           clearInterval(pollTimer);
@@ -1352,10 +1200,8 @@
             }
             const data = await resp.json();
             lastData = data;
-            const view = getFilteredRowsAndIndexes(data.header, data.rows, data.details || []);
-            renderTable(data.header, view.rows, view.indexes);
+            renderTable(data.header, data.rows);
             summaryBox.innerHTML = renderSummaryBox(data.header, data.rows, data.details || []);
-            setFilterEnabled(Boolean(data.done && (data.rows || []).length));
             if (data.error) {
               setStatus(`Error: ${data.error}`);
               clearInterval(pollTimer);
@@ -1418,31 +1264,6 @@
         return `${statLine}${issues}`;
       }
 
-      errorFilterCheckboxes.forEach((cb) => {
-        cb.addEventListener("change", () => {
-          if (cb.value === "all" && cb.checked) {
-            errorFilterCheckboxes.forEach((x) => {
-              if (x.value !== "all") x.checked = false;
-            });
-          } else if (cb.value !== "all" && cb.checked) {
-            const allCb = errorFilterCheckboxes.find((x) => x.value === "all");
-            if (allCb) allCb.checked = false;
-          } else if (cb.value !== "all") {
-            const hasNonAll = errorFilterCheckboxes.some((x) => x.value !== "all" && x.checked);
-            if (!hasNonAll) {
-              const allCb = errorFilterCheckboxes.find((x) => x.value === "all");
-              if (allCb) allCb.checked = true;
-            }
-          }
-          updateFilterSummaryText();
-          if (!lastData) return;
-          hideTooltip();
-          const view = getFilteredRowsAndIndexes(lastData.header, lastData.rows, lastData.details || []);
-          renderTable(lastData.header, view.rows, view.indexes);
-        });
-      });
-      updateFilterSummaryText();
-      setFilterEnabled(false);
     </script>
   </body>
 </html>
