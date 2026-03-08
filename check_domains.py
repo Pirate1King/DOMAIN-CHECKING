@@ -707,6 +707,17 @@ def is_scheme_only_change(original_url, final_url):
         return False
 
 
+def is_http_to_https_same_host(original_url, final_url):
+    try:
+        o = urlparse(original_url)
+        f = urlparse(final_url)
+        if o.scheme != "http" or f.scheme != "https":
+            return False
+        return _normalize_host(original_url) == _normalize_host(final_url)
+    except Exception:
+        return False
+
+
 def _normalize_host(raw_url):
     try:
         host = (urlparse(raw_url).hostname or "").lower().strip(".")
@@ -838,14 +849,14 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
             continue
 
         final_url = result["final_url"]
-        scheme_only = is_scheme_only_change(link["url"], final_url)
-        if scheme_only:
+        missing_https_redirect = is_http_to_https_same_host(link["url"], final_url)
+        if missing_https_redirect:
             if ignore_https_redirect:
                 tracking_ok += 1
                 ok_links.append(
                     {
                         "link": link["url"],
-                        "reason": f"{result['initial_status']}-> {result['final_status']} (scheme-only)",
+                        "reason": f"{result['initial_status']}-> {result['final_status']} (thieu-https)",
                         "final_url": final_url,
                         "context": link.get("context", "no_text"),
                         "source_url": link.get("source_url", ""),
