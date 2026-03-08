@@ -303,11 +303,6 @@
       .filter-item input {
         accent-color: var(--accent);
       }
-      .filter-help {
-        color: var(--muted);
-        font-size: 11px;
-        padding: 4px 6px 2px;
-      }
       .copy-btn {
         display: inline-flex;
         align-items: center;
@@ -338,10 +333,6 @@
       .scroll-hint {
         color: var(--muted);
         font-size: 12px;
-      }
-      .filter-help-inline {
-        color: var(--muted);
-        font-size: 11px;
       }
       .summary-box {
         margin-top: 10px;
@@ -624,13 +615,12 @@
           <details id="filterDropdown" class="filter-dropdown">
             <summary id="filterSummary" class="filter-trigger">Filter: Tất cả</summary>
             <div class="filter-menu">
-              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="all" checked>Bỏ lọc (hiện tất cả)</label>
-              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="tracking_error">Lỗi tracking (tất cả)</label>
-              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="wrapped">Link bọc chưa đổi domain mới</label>
-              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="subpage">Link nằm ở trang con</label>
-              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="access_error">Domain không truy cập được</label>
-              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="missing_https">Thiếu https (http bị redirect)</label>
-              <div class="filter-help">Tick nhiều mục để lọc nhiều điều kiện.</div>
+              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="all" checked>Tất cả</label>
+              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="tracking_error">Tracking lỗi</label>
+              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="wrapped">Bọc link</label>
+              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="subpage">Trang con</label>
+              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="access_error">Lỗi truy cập</label>
+              <label class="filter-item"><input type="checkbox" class="error-filter-checkbox" value="missing_https">Thiếu https</label>
             </div>
           </details>
           <div class="scroll-hint"></div>
