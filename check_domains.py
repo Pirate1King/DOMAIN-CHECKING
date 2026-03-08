@@ -14,9 +14,9 @@ TRACKING_TOKEN = "a=mswl"
 USER_AGENT = "Mozilla/5.0 (compatible; DomainCheck/1.0)"
 TIMEOUT_SECS = 15
 MAX_REDIRECTS = 5
-MAX_WRAPPER_PROBES = 20
-MAX_WRAPPER_PROBES_SUBPAGE = 40
-WRAPPER_TIMEOUT_SECS = 4
+MAX_WRAPPER_PROBES = 8
+MAX_WRAPPER_PROBES_SUBPAGE = 25
+WRAPPER_TIMEOUT_SECS = 3
 PAGE_RETRY_DELAY_SECS = 0.6
 WRAPPED_URL_KEYS = {
     "url",
@@ -560,19 +560,10 @@ def is_same_host(base_url, candidate_url):
 
 def discover_wrapped_tracking_links(url, scan_subpages=False):
     found = []
-
     followed = fetch_url(url, allow_redirects=True, timeout_secs=WRAPPER_TIMEOUT_SECS)
     final_url = (followed.get("final_url") or "").strip()
-    if final_url:
-        for tracking_url in extract_tracking_from_raw(final_url, url):
-            found.append(
-                {
-                    "url": tracking_url,
-                    "via_type": "wrapped_redirect",
-                    "subpage_from": "",
-                }
-            )
 
+    # Subpage mode: only parse direct tracking links inside subpage content.
     if scan_subpages:
         body = followed.get("body") or b""
         if body:
@@ -593,14 +584,10 @@ def discover_wrapped_tracking_links(url, scan_subpages=False):
                         "node_id": sub_item.get("node_id", 0),
                     }
                 )
-
-    # Fallback: if nothing found, inspect raw Location without following redirects.
-    if not found:
-        no_redirect = fetch_url(url, allow_redirects=False, timeout_secs=WRAPPER_TIMEOUT_SECS)
-        loc = (no_redirect.get("location") or "").strip()
-        if loc:
-            loc_abs = urljoin(url, loc)
-            for tracking_url in extract_tracking_from_raw(loc_abs, url):
+    else:
+        # Normal mode: keep wrapped-link redirect detection.
+        if final_url:
+            for tracking_url in extract_tracking_from_raw(final_url, url):
                 found.append(
                     {
                         "url": tracking_url,
@@ -608,6 +595,19 @@ def discover_wrapped_tracking_links(url, scan_subpages=False):
                         "subpage_from": "",
                     }
                 )
+        if not found:
+            no_redirect = fetch_url(url, allow_redirects=False, timeout_secs=WRAPPER_TIMEOUT_SECS)
+            loc = (no_redirect.get("location") or "").strip()
+            if loc:
+                loc_abs = urljoin(url, loc)
+                for tracking_url in extract_tracking_from_raw(loc_abs, url):
+                    found.append(
+                        {
+                            "url": tracking_url,
+                            "via_type": "wrapped_redirect",
+                            "subpage_from": "",
+                        }
+                    )
 
     out = []
     seen = set()
