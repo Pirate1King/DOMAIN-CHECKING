@@ -68,6 +68,7 @@ class HrefCollector(HTMLParser):
         self.links = []
         self._current = None
         self._stack = []
+        self._node_seq = 0
 
     def handle_starttag(self, tag, attrs):
         tag = tag.lower()
@@ -125,8 +126,10 @@ class HrefCollector(HTMLParser):
         parent = self._current.get("parent")
         if parent:
             context.append(f"parent={parent}")
+        self._node_seq += 1
         self.links.append(
             {
+                "node_id": self._node_seq,
                 "tag": self._current.get("tag", "a"),
                 "href": self._current["href"],
                 "attrs": dict(attrs),
@@ -179,8 +182,10 @@ class HrefCollector(HTMLParser):
         parent = self._find_parent_context()
         if parent:
             context_parts.append(f"parent={parent}")
+        self._node_seq += 1
         self.links.append(
             {
+                "node_id": self._node_seq,
                 "tag": tag,
                 "href": "",
                 "attrs": dict(attrs_dict),
@@ -283,6 +288,7 @@ def extract_tracking_links(html_bytes, base_url):
     wrapper_seen = set()
     for item in parser.links:
         href = item.get("href", "") or ""
+        node_id = int(item.get("node_id") or 0)
         attrs = item.get("attrs", {}) or {}
         candidates = [href]
         candidates.extend(str(v) for v in attrs.values() if v)
@@ -290,8 +296,7 @@ def extract_tracking_links(html_bytes, base_url):
             for found in extract_tracking_from_raw(raw, base_url):
                 key = (
                     found.lower(),
-                    (item.get("context", "") or "").strip(),
-                    (href or "").strip(),
+                    node_id,
                 )
                 if key in seen:
                     continue
@@ -303,6 +308,7 @@ def extract_tracking_links(html_bytes, base_url):
                         "href": href,
                         "source_url": normalize_candidate_url(href, base_url),
                         "wrapped_from": "",
+                        "subpage_from": "",
                     }
                 )
             for candidate_url in extract_url_candidates(raw, base_url):
@@ -310,8 +316,7 @@ def extract_tracking_links(html_bytes, base_url):
                     continue
                 key = (
                     candidate_url.lower(),
-                    (item.get("context", "no_text") or "").strip(),
-                    (href or "").strip(),
+                    node_id,
                 )
                 if key in wrapper_seen:
                     continue
@@ -319,6 +324,7 @@ def extract_tracking_links(html_bytes, base_url):
                 wrapper_candidates.append(
                     {
                         "url": candidate_url,
+                        "node_id": node_id,
                         "context": item.get("context", "no_text"),
                         "href": href,
                         "score": wrapper_candidate_score(candidate_url, item, base_url),
@@ -346,8 +352,9 @@ def extract_tracking_links(html_bytes, base_url):
                 wrapped_from = ""
             key = (
                 found.lower(),
-                f"{cand['context']}{context_suffix}",
-                (cand.get("href", "") or "").strip(),
+                int(cand.get("node_id") or 0),
+                via_type,
+                (subpage_from or "").lower(),
             )
             if key in seen:
                 continue
