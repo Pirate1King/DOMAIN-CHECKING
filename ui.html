@@ -539,6 +539,10 @@
         <div class="hint">Paste one domain per line</div>
         <textarea id="domains"></textarea>
         <div class="row">
+          <label class="toggle">
+            <input id="scanWrapped" type="checkbox">
+            quét link bọc (chậm hơn)
+          </label>
           <button id="runBtn">Run Check</button>
           <div id="status" class="hint"></div>
         </div>
@@ -600,6 +604,7 @@
     <script>
       const API_BASE = "";
       const runBtn = document.getElementById("runBtn");
+      const scanWrappedEl = document.getElementById("scanWrapped");
       const statusEl = document.getElementById("status");
       const resultsEl = document.getElementById("results");
       const textarea = document.getElementById("domains");
@@ -962,6 +967,7 @@
             body: JSON.stringify({
               domains,
               scan_subpages: false,
+              scan_wrapped: Boolean(scanWrappedEl && scanWrappedEl.checked),
             }),
           });
           if (!resp.ok) {
@@ -1287,6 +1293,7 @@
             body: JSON.stringify({
               domains: [domain],
               scan_subpages: true,
+              scan_wrapped: false,
             }),
           });
           if (!resp.ok) {
