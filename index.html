@@ -731,13 +731,29 @@
         const idxTrackingError = header.indexOf("tracking_error");
         const viewRows = [];
         const indexes = [];
+        const isMissingHttpsTransition = (item) => {
+          const reason = String(item?.reason || "").toLowerCase();
+          if (reason.includes("thieu-https")) return true;
+          const from = String(item?.link || "");
+          const to = String(item?.final_url || "");
+          if (!from || !to) return false;
+          const fromLow = from.toLowerCase();
+          const toLow = to.toLowerCase();
+          if (!fromLow.startsWith("http://") || !toLow.startsWith("https://")) return false;
+          return hostFromUrl(from) === hostFromUrl(to);
+        };
         sourceRows.forEach((row, idx) => {
           const pageStatus = Number(row[idxPageStatus] || 0);
           const trackingError = Number(row[idxTrackingError] || 0);
-          const badLinks = ((details || [])[idx] || {}).tracking_error || [];
+          const detail = (details || [])[idx] || {};
+          const badLinks = detail.tracking_error || [];
+          const okLinks = detail.tracking_ok || [];
           const hasWrapped = badLinks.some((item) => String(item.wrapped_from || "").trim());
           const hasSubpage = badLinks.some((item) => String(item.subpage_from || "").trim() && !String(item.wrapped_from || "").trim());
-          const hasMissingHttps = badLinks.some((item) => String(item.error_type || "").toLowerCase() === "missing_https");
+          const hasMissingHttps =
+            badLinks.some((item) => String(item.error_type || "").toLowerCase() === "missing_https") ||
+            badLinks.some(isMissingHttpsTransition) ||
+            okLinks.some(isMissingHttpsTransition);
           const keep = selected.some((filter) => {
             if (filter === "tracking_error") return trackingError > 0;
             if (filter === "wrapped") return hasWrapped;
