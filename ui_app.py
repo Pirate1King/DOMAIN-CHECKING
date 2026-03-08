@@ -57,7 +57,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(400, "Invalid domains", "text/plain; charset=utf-8")
             return
         domains = extract_domains(domains)
-        ignore_https_redirect = bool(payload.get("ignore_https_redirect"))
+        # Always bypass http->https-only redirects by default.
+        ignore_https_redirect = True
         job_id = start_job(domains, ignore_https_redirect=ignore_https_redirect)
         body = json.dumps({"job_id": job_id})
         self._send(200, body, "application/json; charset=utf-8")
