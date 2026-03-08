@@ -256,6 +256,23 @@
         color: var(--ink);
         cursor: pointer;
       }
+      .subpage-scan-btn {
+        padding: 4px 8px;
+        border-radius: 6px;
+        border: 1px solid #1b5a3e;
+        background: #07160f;
+        color: #9be7c3;
+        font-size: 11px;
+        text-transform: none;
+        box-shadow: none;
+      }
+      .subpage-scan-btn:hover {
+        border-color: #28c27e;
+        color: #d8ffe9;
+      }
+      .subpage-scan-btn:disabled {
+        opacity: 0.55;
+      }
       .webhook-input {
         min-width: 320px;
         max-width: 520px;
@@ -523,10 +540,6 @@
         <textarea id="domains"></textarea>
         <div class="row">
           <button id="runBtn">Run Check</button>
-          <label class="toggle">
-            <input id="scanSubpages" type="checkbox">
-            quet trang con
-          </label>
           <div id="status" class="hint"></div>
         </div>
       </div>
@@ -594,7 +607,6 @@
       const copyTableBtn = document.getElementById("copyTableBtn");
       const sendChatBtn = document.getElementById("sendChatBtn");
       const webhookUrl = document.getElementById("webhookUrl");
-      const scanSubpages = document.getElementById("scanSubpages");
       const tooltip = document.getElementById("tooltip");
       const tooltipTitle = document.getElementById("tooltipTitle");
       const tooltipSubtitle = document.getElementById("tooltipSubtitle");
@@ -607,6 +619,7 @@
       let pollTimer = null;
       let activeDetailCell = null;
       let activeDetailRow = null;
+      let subscanRunningRows = new Set();
 
       function setStatus(text) {
         statusEl.textContent = text;
@@ -625,6 +638,7 @@
         for (const col of header) {
           html += `<th>${col}</th>`;
         }
+        html += "<th>subpage</th>";
         html += "</tr></thead><tbody>";
         const idxPageStatus = header.indexOf("page_status");
         const idxTrackingError = header.indexOf("tracking_error");
@@ -676,6 +690,8 @@
               html += `<td>${value}</td>`;
             }
           });
+          const running = subscanRunningRows.has(sourceRowIdx);
+          html += `<td><button class="subpage-scan-btn" data-subscan-row="${sourceRowIdx}" ${running ? "disabled" : ""}>scan subpage</button></td>`;
           html += "</tr>";
         });
         html += "</tbody></table></div>";
@@ -945,7 +961,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               domains,
-              scan_subpages: Boolean(scanSubpages && scanSubpages.checked),
+              scan_subpages: false,
             }),
           });
           if (!resp.ok) {
@@ -1145,6 +1161,12 @@
       }
 
       resultsEl.addEventListener("click", (event) => {
+        const subscanBtn = event.target.closest("button[data-subscan-row]");
+        if (subscanBtn) {
+          const rowIdx = Number(subscanBtn.dataset.subscanRow || 0);
+          runSubpageScanForRow(rowIdx);
+          return;
+        }
         const cell = event.target.closest("td[data-detail]");
         if (!cell || !lastData) {
           if (!tooltip.contains(event.target)) {
@@ -1228,6 +1250,65 @@
             runBtn.disabled = false;
           }
         }, 1000);
+      }
+
+      async function waitJobDone(jobId) {
+        while (true) {
+          const resp = await fetch(`${API_BASE}/status?job=${jobId}`);
+          if (!resp.ok) {
+            throw new Error(`Status error ${resp.status}`);
+          }
+          const data = await resp.json();
+          if (data.error) {
+            throw new Error(data.error);
+          }
+          if (data.done) {
+            return data;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 900));
+        }
+      }
+
+      async function runSubpageScanForRow(rowIdx) {
+        if (!lastData || !lastData.rows || !lastData.rows[rowIdx]) return;
+        const header = lastData.header || [];
+        const idxDomain = header.indexOf("domain");
+        if (idxDomain < 0) return;
+        const domain = String(lastData.rows[rowIdx][idxDomain] || "").trim();
+        if (!domain) return;
+        if (subscanRunningRows.has(rowIdx)) return;
+        subscanRunningRows.add(rowIdx);
+        renderTable(lastData.header, lastData.rows);
+        setStatus(`subpage scan: ${domain}...`);
+        try {
+          const resp = await fetch(`${API_BASE}/run`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              domains: [domain],
+              scan_subpages: true,
+            }),
+          });
+          if (!resp.ok) {
+            throw new Error(`server error ${resp.status}`);
+          }
+          const { job_id } = await resp.json();
+          const doneData = await waitJobDone(job_id);
+          if ((doneData.rows || []).length) {
+            lastData.rows[rowIdx] = doneData.rows[0];
+          }
+          if ((doneData.details || []).length) {
+            lastData.details[rowIdx] = doneData.details[0];
+          }
+          renderTable(lastData.header, lastData.rows);
+          summaryBox.innerHTML = renderSummaryBox(lastData.header, lastData.rows, lastData.details || []);
+          setStatus(`subpage scan done: ${domain}`);
+        } catch (err) {
+          setStatus(`subpage scan failed: ${err}`);
+        } finally {
+          subscanRunningRows.delete(rowIdx);
+          renderTable(lastData.header, lastData.rows);
+        }
       }
 
       function parseDomains(text) {
