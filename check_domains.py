@@ -275,7 +275,7 @@ def fetch_homepage_with_retry(domain):
     return second
 
 
-def extract_tracking_links(html_bytes, base_url):
+def extract_tracking_links(html_bytes, base_url, scan_subpages=False):
     try:
         html_text = html_bytes.decode("utf-8", errors="ignore")
     except Exception:
@@ -343,7 +343,7 @@ def extract_tracking_links(html_bytes, base_url):
         if TRACKING_TOKEN in cand["url"].lower():
             continue
         probes += 1
-        wrapped_links = discover_wrapped_tracking_links(cand["url"])
+        wrapped_links = discover_wrapped_tracking_links(cand["url"], scan_subpages=scan_subpages)
         for wrapped_item in wrapped_links:
             found = wrapped_item.get("url", "")
             via_type = wrapped_item.get("via_type", "")
@@ -506,7 +506,7 @@ def is_same_host(base_url, candidate_url):
     return bool(src and dst and src == dst)
 
 
-def discover_wrapped_tracking_links(url):
+def discover_wrapped_tracking_links(url, scan_subpages=False):
     found = []
 
     no_redirect = fetch_url(url, allow_redirects=False, timeout_secs=WRAPPER_TIMEOUT_SECS)
@@ -534,21 +534,22 @@ def discover_wrapped_tracking_links(url):
                 }
             )
 
-    body = followed.get("body") or b""
-    if body:
-        try:
-            text = body.decode("utf-8", errors="ignore")
-        except Exception:
-            text = ""
-        if text:
-            for tracking_url in extract_tracking_from_raw(text, url):
-                found.append(
-                    {
-                        "url": tracking_url,
-                        "via_type": "subpage_direct",
-                        "subpage_from": final_url or url,
-                    }
-                )
+    if scan_subpages:
+        body = followed.get("body") or b""
+        if body:
+            try:
+                text = body.decode("utf-8", errors="ignore")
+            except Exception:
+                text = ""
+            if text:
+                for tracking_url in extract_tracking_from_raw(text, url):
+                    found.append(
+                        {
+                            "url": tracking_url,
+                            "via_type": "subpage_direct",
+                            "subpage_from": final_url or url,
+                        }
+                    )
 
     out = []
     seen = set()
@@ -838,7 +839,7 @@ def build_output_header(header):
     return out_header
 
 
-def process_domain(domain, out_header, ignore_https_redirect=False):
+def process_domain(domain, out_header, ignore_https_redirect=False, scan_subpages=False):
     page = fetch_homepage_with_retry(domain)
     page_status = page["status"]
     page_url = page.get("page_url", "")
@@ -849,7 +850,7 @@ def process_domain(domain, out_header, ignore_https_redirect=False):
         notes.append(f"page_error:{page['error']}")
         tracking_links = []
     else:
-        tracking_links = extract_tracking_links(page["body"], page_final or page_url)
+        tracking_links = extract_tracking_links(page["body"], page_final or page_url, scan_subpages=scan_subpages)
         tracking_links = dedupe_tracking_links(tracking_links)
 
     tracking_total = len(tracking_links)

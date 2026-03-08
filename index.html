@@ -595,6 +595,10 @@
         <textarea id="domains"></textarea>
         <div class="row">
           <button id="runBtn">Run Check</button>
+          <label class="toggle">
+            <input id="scanSubpages" type="checkbox">
+            quet trang con
+          </label>
           <div id="status" class="hint"></div>
         </div>
       </div>
@@ -672,6 +676,7 @@
       const copyTableBtn = document.getElementById("copyTableBtn");
       const sendChatBtn = document.getElementById("sendChatBtn");
       const webhookUrl = document.getElementById("webhookUrl");
+      const scanSubpages = document.getElementById("scanSubpages");
       const tooltip = document.getElementById("tooltip");
       const tooltipTitle = document.getElementById("tooltipTitle");
       const tooltipSubtitle = document.getElementById("tooltipSubtitle");
@@ -1086,6 +1091,7 @@
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               domains,
+              scan_subpages: Boolean(scanSubpages && scanSubpages.checked),
             }),
           });
           if (!resp.ok) {

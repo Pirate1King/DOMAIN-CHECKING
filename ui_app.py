@@ -59,7 +59,12 @@ class Handler(BaseHTTPRequestHandler):
         domains = extract_domains(domains)
         # Always bypass http->https-only redirects by default.
         ignore_https_redirect = True
-        job_id = start_job(domains, ignore_https_redirect=ignore_https_redirect)
+        scan_subpages = bool(payload.get("scan_subpages", False))
+        job_id = start_job(
+            domains,
+            ignore_https_redirect=ignore_https_redirect,
+            scan_subpages=scan_subpages,
+        )
         body = json.dumps({"job_id": job_id})
         self._send(200, body, "application/json; charset=utf-8")
 
@@ -156,7 +161,7 @@ def extract_domains(raw_domains):
     return found
 
 
-def start_job(domains, ignore_https_redirect=False):
+def start_job(domains, ignore_https_redirect=False, scan_subpages=False):
     job_id = uuid.uuid4().hex
     header = build_output_header(["domain"])
     with JOBS_LOCK:
@@ -170,16 +175,17 @@ def start_job(domains, ignore_https_redirect=False):
             "done": False,
             "error": "",
             "ignore_https_redirect": ignore_https_redirect,
+            "scan_subpages": scan_subpages,
         }
 
     thread = threading.Thread(
-        target=run_job, args=(job_id, domains, ignore_https_redirect), daemon=True
+        target=run_job, args=(job_id, domains, ignore_https_redirect, scan_subpages), daemon=True
     )
     thread.start()
     return job_id
 
 
-def run_job(job_id, domains, ignore_https_redirect=False):
+def run_job(job_id, domains, ignore_https_redirect=False, scan_subpages=False):
     header = build_output_header(["domain"])
     try:
         for idx, domain in enumerate(domains):
@@ -192,7 +198,10 @@ def run_job(job_id, domains, ignore_https_redirect=False):
                 job["started"] = idx + 1
                 job["current_domain"] = domain
             row, detail = process_domain(
-                domain, header, ignore_https_redirect=ignore_https_redirect
+                domain,
+                header,
+                ignore_https_redirect=ignore_https_redirect,
+                scan_subpages=scan_subpages,
             )
             with JOBS_LOCK:
                 job = JOBS.get(job_id)
