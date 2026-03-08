@@ -369,8 +369,6 @@ def extract_tracking_links(html_bytes, base_url, scan_subpages=False):
                 )
 
     wrapper_candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
-    if not scan_subpages:
-        return links
 
     probes = 0
     probe_limit = MAX_WRAPPER_PROBES_SUBPAGE if scan_subpages else MAX_WRAPPER_PROBES
