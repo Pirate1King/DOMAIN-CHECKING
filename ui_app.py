@@ -3,6 +3,7 @@ import os
 import re
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.error import URLError
@@ -14,6 +15,7 @@ from check_domains import build_output_header, process_domain
 HTML_PATH = Path(__file__).with_name("ui.html")
 JOBS = {}
 JOBS_LOCK = threading.Lock()
+DOMAIN_WORKERS = 4
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -128,13 +130,16 @@ class Handler(BaseHTTPRequestHandler):
             if not job:
                 self._send(404, "Job not found", "text/plain; charset=utf-8")
                 return
+            rows = [row for row in job["rows"] if row is not None]
+            details = [detail for detail in job["details"] if detail is not None]
             payload = {
                 "header": job["header"],
-                "rows": job["rows"],
-                "details": job["details"],
+                "rows": rows,
+                "details": details,
                 "total": job["total"],
                 "started": job.get("started", 0),
                 "current_domain": job.get("current_domain", ""),
+                "completed": job.get("completed", 0),
                 "done": job["done"],
                 "error": job["error"],
             }
@@ -171,11 +176,13 @@ def start_job(domains, ignore_https_redirect=False, scan_subpages=False, scan_wr
     with JOBS_LOCK:
         JOBS[job_id] = {
             "header": header,
-            "rows": [],
-            "details": [],
+            "rows": [None] * len(domains),
+            "details": [None] * len(domains),
             "total": len(domains),
             "started": 0,
             "current_domain": "",
+            "active_domains": [],
+            "completed": 0,
             "done": False,
             "error": "",
             "ignore_https_redirect": ignore_https_redirect,
@@ -195,32 +202,53 @@ def start_job(domains, ignore_https_redirect=False, scan_subpages=False, scan_wr
 def run_job(job_id, domains, ignore_https_redirect=False, scan_subpages=False, scan_wrapped=False):
     header = build_output_header(["domain"])
     try:
-        for idx, domain in enumerate(domains):
-            if not domain:
-                continue
+        tasks = [(idx, domain) for idx, domain in enumerate(domains) if domain]
+        if tasks:
+            worker_count = min(DOMAIN_WORKERS, len(tasks))
             with JOBS_LOCK:
                 job = JOBS.get(job_id)
                 if not job:
                     return
-                job["started"] = idx + 1
-                job["current_domain"] = domain
-            row, detail = process_domain(
-                domain,
-                header,
-                ignore_https_redirect=ignore_https_redirect,
-                scan_subpages=scan_subpages,
-                scan_wrapped=scan_wrapped,
-            )
-            with JOBS_LOCK:
-                job = JOBS.get(job_id)
-                if not job:
-                    return
-                job["rows"].append(row)
-                job["details"].append(detail)
+                job["started"] = len(tasks)
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                future_map = {}
+                active_domains = set()
+                for idx, domain in tasks:
+                    future = executor.submit(
+                        process_domain,
+                        domain,
+                        header,
+                        ignore_https_redirect=ignore_https_redirect,
+                        scan_subpages=scan_subpages,
+                        scan_wrapped=scan_wrapped,
+                    )
+                    future_map[future] = (idx, domain)
+                    active_domains.add(domain)
+                    with JOBS_LOCK:
+                        job = JOBS.get(job_id)
+                        if not job:
+                            return
+                        job["active_domains"] = sorted(active_domains)
+                        job["current_domain"] = ", ".join(job["active_domains"][:3])
+
+                for future in as_completed(future_map):
+                    idx, domain = future_map[future]
+                    row, detail = future.result()
+                    active_domains.discard(domain)
+                    with JOBS_LOCK:
+                        job = JOBS.get(job_id)
+                        if not job:
+                            return
+                        job["rows"][idx] = row
+                        job["details"][idx] = detail
+                        job["completed"] = int(job.get("completed", 0)) + 1
+                        job["active_domains"] = sorted(active_domains)
+                        job["current_domain"] = ", ".join(job["active_domains"][:3])
         with JOBS_LOCK:
             job = JOBS.get(job_id)
             if job:
                 job["current_domain"] = ""
+                job["active_domains"] = []
                 job["done"] = True
     except Exception as exc:
         with JOBS_LOCK:

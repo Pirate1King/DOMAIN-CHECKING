@@ -30,6 +30,7 @@ BROWSER_HEADERS = {
 }
 TIMEOUT_SECS = 15
 MAX_REDIRECTS = 5
+ANALYZE_WORKERS = 8
 MAX_WRAPPER_PROBES = 18
 MAX_SUBPAGE_PROBES = 24
 WRAPPER_TIMEOUT_SECS = 3
@@ -62,7 +63,30 @@ WRAPPED_URL_KEYS = {
     "rd",
     "ref",
 }
+URLISH_ATTR_KEYS = {
+    "href",
+    "src",
+    "srcset",
+    "data-src",
+    "data-srcset",
+    "data-href",
+    "data-url",
+    "data-link",
+    "data-target",
+    "action",
+    "formaction",
+    "poster",
+    "content",
+}
+EVENT_ATTR_KEYS = {
+    "onclick",
+    "onmousedown",
+    "onmouseup",
+    "ontouchstart",
+    "ontouchend",
+}
 URL_REGEX = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
+QUOTED_RELATIVE_URL_REGEX = re.compile(r"""['"]((?:https?:)?//[^'"\s<>]+|/[^'"\s<>]+)['"]""", re.IGNORECASE)
 CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
 STATIC_EXTENSIONS = (
     ".css",
@@ -189,11 +213,18 @@ class HrefCollector(HTMLParser):
         for key, value in attrs_dict.items():
             if not value:
                 continue
+            key_low = str(key).lower()
             low = str(value).lower()
             if "http" in low or TRACKING_TOKEN in low:
                 has_relevant_attr = True
                 break
-            if key.startswith("data-") or key in ("onclick", "onmousedown"):
+            if key_low.startswith("data-") or key_low in EVENT_ATTR_KEYS:
+                has_relevant_attr = True
+                break
+            if key_low in URLISH_ATTR_KEYS:
+                has_relevant_attr = True
+                break
+            if key_low == "style" and "url(" in low:
                 has_relevant_attr = True
                 break
         if not has_relevant_attr:
@@ -676,6 +707,7 @@ def extract_url_candidates(raw, base_url):
         return []
     candidates = [text]
     candidates.extend(URL_REGEX.findall(text))
+    candidates.extend(extract_quoted_url_candidates(text))
     out = []
     seen = set()
     for val in candidates:
@@ -687,6 +719,23 @@ def extract_url_candidates(raw, base_url):
             continue
         seen.add(key)
         out.append(normalized)
+    return out
+
+
+def extract_quoted_url_candidates(text):
+    out = []
+    seen = set()
+    for found in QUOTED_RELATIVE_URL_REGEX.findall(str(text or "")):
+        value = str(found or "").strip()
+        if not value:
+            continue
+        low = value.lower()
+        if low.startswith(("javascript:", "mailto:", "tel:", "#")):
+            continue
+        if value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
     return out
 
 
@@ -861,8 +910,7 @@ def build_probe_candidates(html_text, base_url, mode="wrapped"):
                     }
                 )
     candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
-    limit = MAX_SUBPAGE_PROBES if mode == "subpage" else MAX_WRAPPER_PROBES
-    return candidates[:limit]
+    return candidates
 
 
 def discover_wrapped_tracking_links(candidate):
@@ -943,10 +991,13 @@ def probe_candidates(candidates, mode="wrapped"):
             for item in items:
                 key = (
                     str(item.get("url") or "").strip().lower(),
-                    str(item.get("via_type") or "").strip().lower(),
+                    int(item.get("node_id") or 0),
+                    str(item.get("context") or "").strip().lower(),
+                    str(item.get("href") or "").strip().lower(),
+                    str(item.get("source_url") or "").strip().lower(),
                     str(item.get("wrapped_from") or "").strip().lower(),
                     str(item.get("subpage_from") or "").strip().lower(),
-                    str(item.get("source_url") or "").strip().lower(),
+                    str(item.get("via_type") or "").strip().lower(),
                 )
                 if key in seen:
                     continue
@@ -963,6 +1014,7 @@ def extract_tracking_from_raw(raw_value, base_url):
     if text:
         candidates.append(text.strip())
     candidates.extend(URL_REGEX.findall(text))
+    candidates.extend(extract_quoted_url_candidates(text))
 
     results = []
     visited = set()
@@ -1253,7 +1305,7 @@ def process_domain(domain, out_header, ignore_https_redirect=False, scan_subpage
     tracking_error = 0
     bad_links = []
     ok_links = []
-    analyzed_cache = {}
+    analyzed_cache = analyze_tracking_links_parallel(tracking_links)
 
     for link in tracking_links:
         cached = analyzed_cache.get(link["url"])
@@ -1369,6 +1421,40 @@ def process_domain(domain, out_header, ignore_https_redirect=False, scan_subpage
 
     time.sleep(0.2)
     return out_row, detail
+
+
+def analyze_tracking_links_parallel(tracking_links):
+    urls = []
+    seen = set()
+    for link in tracking_links or []:
+        url = str(link.get("url") or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        urls.append(url)
+    if not urls:
+        return {}
+    if len(urls) == 1:
+        url = urls[0]
+        return {url: analyze_tracking_link(url)}
+
+    out = {}
+    worker_count = min(ANALYZE_WORKERS, len(urls))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        future_map = {executor.submit(analyze_tracking_link, url): url for url in urls}
+        for future in as_completed(future_map):
+            url = future_map[future]
+            try:
+                out[url] = future.result()
+            except Exception:
+                out[url] = {
+                    "is_redirect": False,
+                    "initial_status": 0,
+                    "final_status": 0,
+                    "final_url": url,
+                    "redirect_chain": "",
+                }
+    return out
 
 
 def check_domains(domains):

@@ -1271,7 +1271,7 @@
               return;
             }
             const total = data.total || 0;
-            const done = data.rows.length || 0;
+            const done = Number(data.completed || ((data.rows || []).length || 0));
             const started = Number(data.started || 0);
             const pct = total ? Math.round((done / total) * 100) : 0;
             progressBar.style.width = `${pct}%`;
