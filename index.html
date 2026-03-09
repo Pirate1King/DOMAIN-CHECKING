@@ -87,15 +87,6 @@
       .toggle input {
         accent-color: var(--accent);
       }
-      .network-select {
-        min-width: 180px;
-        padding: 8px 10px;
-        border-radius: 8px;
-        border: 1px solid var(--border);
-        background: #07160f;
-        color: var(--ink);
-        font-size: 12px;
-      }
       button {
         background: var(--accent);
         color: #02160c;
@@ -580,18 +571,12 @@
         <textarea id="domains"></textarea>
         <div class="row">
           <button id="runBtn">Run Check</button>
+          <button id="egressIpBtn" class="copy-btn" type="button">Show Outbound IP</button>
           <label class="toggle">
             <input id="scanWrapped" type="checkbox">
             scan link bọc
           </label>
           <div id="status" class="hint"></div>
-        </div>
-        <div class="row">
-          <select id="proxyMode" class="network-select" aria-label="Network mode">
-            <option value="direct">Direct</option>
-            <option value="custom">Custom Proxy</option>
-          </select>
-          <input id="proxyUrl" class="webhook-input" type="text" placeholder="http://user:pass@host:port" style="display:none">
         </div>
       </div>
       <div class="panel">
@@ -651,12 +636,11 @@
     <script>
       const API_BASE = "";
       const runBtn = document.getElementById("runBtn");
+      const egressIpBtn = document.getElementById("egressIpBtn");
       const scanWrappedEl = document.getElementById("scanWrapped");
       const statusEl = document.getElementById("status");
       const resultsEl = document.getElementById("results");
       const textarea = document.getElementById("domains");
-      const proxyModeEl = document.getElementById("proxyMode");
-      const proxyUrlEl = document.getElementById("proxyUrl");
       const copyBtn = document.getElementById("copyBtn");
       const copyTableBtn = document.getElementById("copyTableBtn");
       const sendChatBtn = document.getElementById("sendChatBtn");
@@ -674,17 +658,9 @@
       let activeDetailCell = null;
       let activeDetailRow = null;
       let subscanRunningRows = new Set();
-      let lastRunNetwork = { proxyMode: "direct", proxyUrl: "" };
 
       function setStatus(text) {
         statusEl.textContent = text;
-      }
-
-      function syncProxyInputs() {
-        const isCustom = proxyModeEl && proxyModeEl.value === "custom";
-        if (proxyUrlEl) {
-          proxyUrlEl.style.display = isCustom ? "" : "none";
-        }
       }
 
       function renderTable(header, rows) {
@@ -1012,18 +988,11 @@
           setStatus("Please enter at least one domain.");
           return;
         }
-        const proxyMode = proxyModeEl ? proxyModeEl.value : "direct";
-        const proxyUrl = proxyUrlEl ? (proxyUrlEl.value || "").trim() : "";
-        if (proxyMode === "custom" && !proxyUrl) {
-          setStatus("Enter custom proxy URL.");
-          return;
-        }
         runBtn.disabled = true;
         setStatus("Starting...");
         progressBar.style.width = "0%";
         progressText.textContent = `Processed 0/${domains.length}`;
         resultsEl.innerHTML = "";
-        lastRunNetwork = { proxyMode, proxyUrl };
         try {
           const resp = await fetch(`${API_BASE}/run`, {
             method: "POST",
@@ -1032,8 +1001,6 @@
               domains,
               scan_subpages: false,
               scan_wrapped: Boolean(scanWrappedEl && scanWrappedEl.checked),
-              proxy_mode: proxyMode,
-              proxy_url: proxyUrl,
             }),
           });
           if (!resp.ok) {
@@ -1062,6 +1029,23 @@
           setStatus("Copied error summary.");
         } catch (err) {
           setStatus("Copy failed: " + err);
+        }
+      });
+
+      egressIpBtn.addEventListener("click", async () => {
+        egressIpBtn.disabled = true;
+        setStatus("Checking outbound IP...");
+        try {
+          const resp = await fetch(`${API_BASE}/egress-ip`);
+          const data = await resp.json();
+          if (!resp.ok || !data.ip) {
+            throw new Error(data.error || `Server error ${resp.status}`);
+          }
+          setStatus(`Outbound IP: ${data.ip}`);
+        } catch (err) {
+          setStatus(`Outbound IP check failed: ${err}`);
+        } finally {
+          egressIpBtn.disabled = false;
         }
       });
 
@@ -1368,8 +1352,6 @@
               domains: [domain],
               scan_subpages: true,
               scan_wrapped: false,
-              proxy_mode: lastRunNetwork.proxyMode || "direct",
-              proxy_url: lastRunNetwork.proxyUrl || "",
             }),
           });
           if (!resp.ok) {
@@ -1423,11 +1405,6 @@
           return `<div class="summary-error">${line}</div>`;
         }).join("");
         return `${statLine}${issues}`;
-      }
-
-      if (proxyModeEl) {
-        proxyModeEl.addEventListener("change", syncProxyInputs);
-        syncProxyInputs();
       }
 
     </script>
