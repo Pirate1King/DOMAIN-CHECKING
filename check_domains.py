@@ -1,24 +1,47 @@
 import csv
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import html
+import json
 import re
 import socket
+import subprocess
 import sys
+import tempfile
 import time
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, quote, unquote, urljoin, urlparse, urlsplit, urlunsplit
-from urllib.request import Request, build_opener, HTTPRedirectHandler
+from urllib.request import Request, build_opener, HTTPRedirectHandler, urlopen
 
 
 TRACKING_TOKEN = "a=mswl"
-USER_AGENT = "Mozilla/5.0 (compatible; DomainCheck/1.0)"
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/122.0.0.0 Safari/537.36"
+)
+BROWSER_HEADERS = {
+    "User-Agent": USER_AGENT,
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
+    "Upgrade-Insecure-Requests": "1",
+}
 TIMEOUT_SECS = 15
 MAX_REDIRECTS = 5
-MAX_WRAPPER_PROBES = 12
-MAX_WRAPPER_PROBES_SUBPAGE = 25
+MAX_WRAPPER_PROBES = 18
+MAX_SUBPAGE_PROBES = 24
 WRAPPER_TIMEOUT_SECS = 3
+WRAPPER_WORKERS = 8
+SUBPAGE_WORKERS = 6
 WRAPPER_USE_LOCATION_FALLBACK = True
 PAGE_RETRY_DELAY_SECS = 0.6
+DOH_CACHE = {}
+DOH_ENDPOINTS = (
+    "https://dns.google/resolve?name={name}&type=A",
+    "https://cloudflare-dns.com/dns-query?name={name}&type=A",
+)
 WRAPPED_URL_KEYS = {
     "url",
     "u",
@@ -206,8 +229,170 @@ def _open_url(url, allow_redirects=True, timeout_secs=TIMEOUT_SECS):
     if not allow_redirects:
         handlers.append(NoRedirect())
     opener = build_opener(*handlers)
-    req = Request(url, headers={"User-Agent": USER_AGENT})
+    req = Request(url, headers=BROWSER_HEADERS)
     return opener.open(req, timeout=timeout_secs)
+
+
+def is_dns_error(exc):
+    text = str(exc).lower()
+    hints = (
+        "nodename nor servname provided",
+        "name or service not known",
+        "temporary failure in name resolution",
+        "getaddrinfo failed",
+        "could not resolve host",
+    )
+    return any(hint in text for hint in hints)
+
+
+def resolve_hostname_doh(hostname):
+    host = str(hostname or "").strip().lower().strip(".")
+    if not host:
+        return []
+    cached = DOH_CACHE.get(host)
+    if cached is not None:
+        return list(cached)
+
+    resolved = []
+    for endpoint in DOH_ENDPOINTS:
+        try:
+            req = Request(
+                endpoint.format(name=quote(host)),
+                headers={
+                    "User-Agent": USER_AGENT,
+                    "Accept": "application/dns-json, application/json",
+                },
+            )
+            with urlopen(req, timeout=5) as resp:
+                payload = json.loads(resp.read().decode("utf-8", errors="ignore"))
+        except Exception:
+            continue
+        for answer in payload.get("Answer", []) or []:
+            if int(answer.get("type") or 0) != 1:
+                continue
+            value = str(answer.get("data") or "").strip()
+            if value and value not in resolved:
+                resolved.append(value)
+        if resolved:
+            break
+
+    DOH_CACHE[host] = tuple(resolved)
+    return list(resolved)
+
+
+def parse_location_from_headers(header_text):
+    blocks = [block for block in str(header_text or "").split("\r\n\r\n") if block.strip()]
+    if not blocks:
+        blocks = [block for block in str(header_text or "").split("\n\n") if block.strip()]
+    for line in reversed(blocks[-1].splitlines() if blocks else []):
+        if line.lower().startswith("location:"):
+            return line.split(":", 1)[1].strip()
+    return ""
+
+
+def fetch_url_via_curl(url, allow_redirects=True, timeout_secs=TIMEOUT_SECS, resolved_ip=None):
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").strip()
+    if not host:
+        return None
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    resolve_targets = [resolved_ip] if resolved_ip else [None]
+    last_error = ""
+    for ip in resolve_targets:
+        with tempfile.NamedTemporaryFile() as header_file, tempfile.NamedTemporaryFile() as body_file:
+            cmd = [
+                "curl",
+                "-sS",
+                "--http1.1",
+                "--max-time",
+                str(int(timeout_secs)),
+                "--connect-timeout",
+                str(max(2, min(int(timeout_secs), 5))),
+                "-A",
+                USER_AGENT,
+                "-H",
+                f"Accept: {BROWSER_HEADERS['Accept']}",
+                "-H",
+                f"Accept-Language: {BROWSER_HEADERS['Accept-Language']}",
+                "-H",
+                "Cache-Control: no-cache",
+                "-H",
+                "Pragma: no-cache",
+                "-H",
+                "Upgrade-Insecure-Requests: 1",
+                "-D",
+                header_file.name,
+                "-o",
+                body_file.name,
+                "-w",
+                "%{http_code}\n%{url_effective}",
+            ]
+            if ip:
+                cmd.extend(["--resolve", f"{host}:{port}:{ip}"])
+            if allow_redirects:
+                cmd.append("-L")
+            cmd.append(url)
+
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=max(timeout_secs + 2, 5),
+                    check=False,
+                )
+            except Exception as exc:
+                last_error = str(exc)
+                continue
+
+            if proc.returncode != 0:
+                last_error = (proc.stderr or proc.stdout or "").strip() or f"curl_exit:{proc.returncode}"
+                continue
+
+            header_text = header_file.read().decode("utf-8", errors="ignore")
+            body = body_file.read()
+            lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+            try:
+                status = int(lines[-2]) if len(lines) >= 2 else 0
+            except ValueError:
+                status = 0
+            final_url = lines[-1] if lines else url
+            return {
+                "status": status,
+                "final_url": final_url,
+                "body": body,
+                "error": "",
+                "location": parse_location_from_headers(header_text),
+            }
+
+    if last_error:
+        return {
+            "status": 0,
+            "final_url": url,
+            "body": b"",
+            "error": last_error,
+            "location": "",
+        }
+    return None
+
+
+def fetch_url_via_curl_resolve(url, allow_redirects=True, timeout_secs=TIMEOUT_SECS):
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").strip()
+    if not host:
+        return None
+    resolved_ips = resolve_hostname_doh(host)
+    if not resolved_ips:
+        return None
+    last_failure = None
+    for ip in resolved_ips:
+        result = fetch_url_via_curl(url, allow_redirects=allow_redirects, timeout_secs=timeout_secs, resolved_ip=ip)
+        if result is None:
+            continue
+        if result.get("status"):
+            return result
+        last_failure = result
+    return last_failure
 
 
 def fetch_url(url, allow_redirects=True, timeout_secs=TIMEOUT_SECS):
@@ -224,14 +409,27 @@ def fetch_url(url, allow_redirects=True, timeout_secs=TIMEOUT_SECS):
             "location": resp.headers.get("Location", ""),
         }
     except HTTPError as exc:
-        return {
+        try:
+            body = exc.read()
+        except Exception:
+            body = b""
+        response = {
             "status": exc.code,
-            "final_url": url,
-            "body": b"",
+            "final_url": exc.geturl() or url,
+            "body": body,
             "error": "",
             "location": exc.headers.get("Location", ""),
         }
+        if exc.code in (403, 429):
+            fallback = fetch_url_via_curl(url, allow_redirects=allow_redirects, timeout_secs=timeout_secs)
+            if fallback is not None and int(fallback.get("status") or 0) > int(response["status"] or 0):
+                return fallback
+        return response
     except (URLError, socket.timeout, ValueError) as exc:
+        if is_dns_error(exc):
+            fallback = fetch_url_via_curl_resolve(url, allow_redirects=allow_redirects, timeout_secs=timeout_secs)
+            if fallback is not None:
+                return fallback
         return {
             "status": 0,
             "final_url": url,
@@ -277,11 +475,11 @@ def page_status_score(status):
     if 300 <= status < 400:
         return 500 - status
     if status in (401, 403):
-        return 350 - status
+        return 250
     if 400 <= status < 500:
-        return 300 - status
+        return 200
     if 500 <= status < 600:
-        return 200 - status
+        return 100
     return 0
 
 
@@ -378,100 +576,68 @@ def extract_tracking_links(html_bytes, base_url, scan_subpages=False, scan_wrapp
         html_text = html_bytes.decode("utf-8", errors="ignore")
     except Exception:
         html_text = ""
-    if scan_wrapped:
-        parser = HrefCollector()
-        parser.feed(html_text)
-        wrapper_candidates = []
-        wrapper_seen = set()
-        for item in parser.links:
-            href = item.get("href", "") or ""
-            node_id = int(item.get("node_id") or 0)
-            attrs = item.get("attrs", {}) or {}
-            candidates = [href]
-            candidates.extend(str(v) for v in attrs.values() if v)
-            for raw in candidates:
-                for candidate_url in extract_url_candidates(raw, base_url):
-                    if not is_likely_wrapper_candidate(candidate_url, item, base_url):
-                        continue
-                    key = (
-                        candidate_url.lower(),
-                        node_id,
-                    )
-                    if key in wrapper_seen:
-                        continue
-                    wrapper_seen.add(key)
-                    wrapper_candidates.append(
-                        {
-                            "url": candidate_url,
-                            "node_id": node_id,
-                            "context": item.get("context", "no_text"),
-                            "href": href,
-                            "score": wrapper_candidate_score(candidate_url, item, base_url),
-                        }
-                    )
-
-        wrapper_candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
-
-        probes = 0
-        probe_limit = MAX_WRAPPER_PROBES_SUBPAGE if scan_subpages else MAX_WRAPPER_PROBES
-        wrapped_cache = {}
-        for cand in wrapper_candidates:
-            if probes >= probe_limit:
-                break
-            if TRACKING_TOKEN in cand["url"].lower():
+    if scan_subpages:
+        subpage_candidates = build_probe_candidates(html_text, base_url, mode="subpage")
+        for wrapped_item in probe_candidates(subpage_candidates, mode="subpage"):
+            found = wrapped_item.get("url", "")
+            via_type = wrapped_item.get("via_type", "")
+            subpage_from = wrapped_item.get("subpage_from", "")
+            context_for_entry = wrapped_item.get("context", "no_text")
+            href_for_entry = wrapped_item.get("href", "")
+            source_url_for_entry = wrapped_item.get("source_url", "")
+            node_for_entry = int(wrapped_item.get("node_id") or 0)
+            key = (
+                found.lower(),
+                node_for_entry,
+                (context_for_entry or "").strip().lower(),
+                (href_for_entry or "").strip().lower(),
+            )
+            if key in seen:
                 continue
-            probes += 1
-            cache_key = (cand["url"], bool(scan_subpages))
-            wrapped_links = wrapped_cache.get(cache_key)
-            if wrapped_links is None:
-                wrapped_links = discover_wrapped_tracking_links(cand["url"], scan_subpages=scan_subpages)
-                wrapped_cache[cache_key] = wrapped_links
-            for wrapped_item in wrapped_links:
-                found = wrapped_item.get("url", "")
-                via_type = wrapped_item.get("via_type", "")
-                subpage_from = wrapped_item.get("subpage_from", "")
-                context_from_item = wrapped_item.get("context", "")
-                href_from_item = wrapped_item.get("href", "")
-                source_url_from_item = wrapped_item.get("source_url", "")
-                node_from_item = int(wrapped_item.get("node_id") or 0)
-                context_suffix = f"; wrapped_from={cand['url']}"
-                wrapped_from = cand.get("url", "")
-                context_for_entry = cand.get("context", "no_text")
-                href_for_entry = cand.get("href", "")
-                source_url_for_entry = cand.get("url", "")
-                node_for_entry = int(cand.get("node_id") or 0)
-                if via_type == "subpage_direct":
-                    context_suffix = f"; subpage_from={subpage_from or cand['url']}"
-                    wrapped_from = ""
-                    if context_from_item:
-                        context_for_entry = context_from_item
-                    if href_from_item:
-                        href_for_entry = href_from_item
-                    if source_url_from_item:
-                        source_url_for_entry = source_url_from_item
-                    if node_from_item:
-                        node_for_entry = node_from_item
-                key = (
-                    found.lower(),
-                    node_for_entry,
-                    (context_for_entry or "").strip().lower(),
-                    (href_for_entry or "").strip().lower(),
-                )
-                if key in seen:
-                    continue
-                seen.add(key)
-                links.append(
-                    {
-                        "url": found,
-                        "node_id": node_for_entry,
-                        "context": f"{context_for_entry}{context_suffix}",
-                        "href": href_for_entry,
-                        "source_url": source_url_for_entry,
-                        "wrapped_from": wrapped_from,
-                        "subpage_from": subpage_from,
-                        "source_type": via_type or "wrapped_redirect",
-                    }
-                )
+            seen.add(key)
+            links.append(
+                {
+                    "url": found,
+                    "node_id": node_for_entry,
+                    "context": f"{context_for_entry}; subpage_from={subpage_from or source_url_for_entry}",
+                    "href": href_for_entry,
+                    "source_url": source_url_for_entry,
+                    "wrapped_from": "",
+                    "subpage_from": subpage_from,
+                    "source_type": via_type or "subpage_direct",
+                }
+            )
+    elif scan_wrapped:
+        wrapper_candidates = build_probe_candidates(html_text, base_url, mode="wrapped")
+        for wrapped_item in probe_candidates(wrapper_candidates, mode="wrapped"):
+            found = wrapped_item.get("url", "")
+            via_type = wrapped_item.get("via_type", "")
+            wrapped_from = wrapped_item.get("wrapped_from", "")
+            context_for_entry = wrapped_item.get("context", "no_text")
+            href_for_entry = wrapped_item.get("href", "")
+            source_url_for_entry = wrapped_item.get("source_url", "")
+            node_for_entry = int(wrapped_item.get("node_id") or 0)
+            key = (
+                found.lower(),
+                node_for_entry,
+                (context_for_entry or "").strip().lower(),
+                (href_for_entry or "").strip().lower(),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            links.append(
+                {
+                    "url": found,
+                    "node_id": node_for_entry,
+                    "context": f"{context_for_entry}; wrapped_from={wrapped_from}",
+                    "href": href_for_entry,
+                    "source_url": source_url_for_entry,
+                    "wrapped_from": wrapped_from,
+                    "subpage_from": "",
+                    "source_type": via_type or "wrapped_redirect",
+                }
+            )
     return links
 
 
@@ -604,97 +770,179 @@ def wrapper_candidate_score(candidate_url, item, base_url):
     return score
 
 
+def is_likely_subpage_candidate(candidate_url, item, base_url):
+    url = (candidate_url or "").lower()
+    if TRACKING_TOKEN in url:
+        return False
+    parsed = urlparse(candidate_url)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    if parsed.fragment:
+        return False
+    path = (parsed.path or "").lower()
+    if path and any(path.endswith(ext) for ext in STATIC_EXTENSIONS):
+        return False
+    if not is_same_host(base_url, candidate_url):
+        return False
+    if path and path != "/":
+        return True
+    return bool(parsed.query)
+
+
+def subpage_candidate_score(candidate_url, item, base_url):
+    score = 0
+    url = (candidate_url or "").lower()
+    context = (item.get("context") or "").lower()
+    href = (item.get("href") or "").lower()
+    if is_same_host(base_url, candidate_url):
+        score += 12
+    if any(token in url for token in ("banner", "button", "cta", "register", "signup", "login")):
+        score += 6
+    if any(token in context for token in ("banner", "button", "cta", "register", "signup", "login")):
+        score += 3
+    if any(token in href for token in ("banner", "button", "cta", "register", "signup", "login")):
+        score += 2
+    parsed = urlparse(candidate_url)
+    if parsed.query:
+        score += 2
+    if parsed.path and parsed.path != "/":
+        score += 2
+    return score
+
+
 def is_same_host(base_url, candidate_url):
     src = _normalize_host(base_url)
     dst = _normalize_host(candidate_url)
     return bool(src and dst and src == dst)
 
 
-def discover_wrapped_tracking_links(url, scan_subpages=False):
+def build_probe_candidates(html_text, base_url, mode="wrapped"):
+    parser = HrefCollector()
+    parser.feed(html_text or "")
+    candidates = []
+    seen = set()
+    for item in parser.links:
+        href = item.get("href", "") or ""
+        node_id = int(item.get("node_id") or 0)
+        attrs = item.get("attrs", {}) or {}
+        raw_values = [href]
+        raw_values.extend(str(v) for v in attrs.values() if v)
+        for raw in raw_values:
+            for candidate_url in extract_url_candidates(raw, base_url):
+                if mode == "wrapped":
+                    if not is_likely_wrapper_candidate(candidate_url, item, base_url):
+                        continue
+                    score = wrapper_candidate_score(candidate_url, item, base_url)
+                else:
+                    if not is_likely_subpage_candidate(candidate_url, item, base_url):
+                        continue
+                    score = subpage_candidate_score(candidate_url, item, base_url)
+                key = (candidate_url.lower(), node_id, mode)
+                if key in seen:
+                    continue
+                seen.add(key)
+                candidates.append(
+                    {
+                        "url": candidate_url,
+                        "node_id": node_id,
+                        "context": item.get("context", "no_text"),
+                        "href": href,
+                        "source_url": normalize_candidate_url(href, base_url),
+                        "score": score,
+                    }
+                )
+    candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
+    limit = MAX_SUBPAGE_PROBES if mode == "subpage" else MAX_WRAPPER_PROBES
+    return candidates[:limit]
+
+
+def discover_wrapped_tracking_links(candidate):
+    url = candidate.get("url", "")
+    if not url:
+        return []
+    no_redirect = fetch_url(url, allow_redirects=False, timeout_secs=WRAPPER_TIMEOUT_SECS)
+    status = int(no_redirect.get("status") or 0)
+    if status not in (301, 302, 303, 307, 308):
+        return []
+    loc = (no_redirect.get("location") or "").strip()
+    if not loc:
+        return []
+    loc_abs = urljoin(url, loc)
     found = []
+    for tracking_url in extract_tracking_from_raw(loc_abs, url):
+        found.append(
+            {
+                "url": tracking_url,
+                "via_type": "wrapped_redirect",
+                "wrapped_from": url,
+                "context": candidate.get("context", "no_text"),
+                "href": candidate.get("href", ""),
+                "source_url": candidate.get("source_url", "") or url,
+                "node_id": candidate.get("node_id", 0),
+            }
+        )
+    return found
+
+
+def discover_subpage_tracking_links(candidate):
+    url = candidate.get("url", "")
+    if not url:
+        return []
     followed = fetch_url(url, allow_redirects=True, timeout_secs=WRAPPER_TIMEOUT_SECS)
-    final_url = (followed.get("final_url") or "").strip()
+    body = followed.get("body") or b""
+    final_url = (followed.get("final_url") or url).strip()
+    source_url = candidate.get("source_url", "") or url
+    if final_url and source_url and not is_same_host(source_url, final_url):
+        return []
+    if not body:
+        return []
+    found = []
+    for sub_item in extract_direct_tracking_links_from_html(
+        body,
+        final_url,
+        source_type="subpage_direct",
+        subpage_from=final_url,
+    ):
+        found.append(
+            {
+                "url": sub_item.get("url", ""),
+                "via_type": "subpage_direct",
+                "subpage_from": sub_item.get("subpage_from", final_url),
+                "context": sub_item.get("context", "no_text"),
+                "href": sub_item.get("href", ""),
+                "source_url": sub_item.get("source_url", "") or final_url,
+                "node_id": sub_item.get("node_id", 0),
+            }
+        )
+    return found
 
-    # Subpage mode: only parse direct tracking links inside subpage content.
-    if scan_subpages:
-        body = followed.get("body") or b""
-        if body:
-            for sub_item in extract_direct_tracking_links_from_html(
-                body,
-                final_url or url,
-                source_type="subpage_direct",
-                subpage_from=(final_url or url),
-            ):
-                found.append(
-                    {
-                        "url": sub_item.get("url", ""),
-                        "via_type": "subpage_direct",
-                        "subpage_from": sub_item.get("subpage_from", final_url or url),
-                        "context": sub_item.get("context", "no_text"),
-                        "href": sub_item.get("href", ""),
-                        "source_url": sub_item.get("source_url", ""),
-                        "node_id": sub_item.get("node_id", 0),
-                    }
-                )
-    else:
-        # Normal mode: keep wrapped-link redirect detection.
-        if final_url:
-            for tracking_url in extract_tracking_from_raw(final_url, url):
-                found.append(
-                    {
-                        "url": tracking_url,
-                        "via_type": "wrapped_redirect",
-                        "subpage_from": "",
-                    }
-                )
-        if not found:
-            body = followed.get("body") or b""
-            if body:
-                try:
-                    body_text = body.decode("utf-8", errors="ignore")
-                except Exception:
-                    body_text = ""
-                if body_text:
-                    for tracking_url in extract_tracking_from_raw(body_text, final_url or url):
-                        found.append(
-                            {
-                                "url": tracking_url,
-                                "via_type": "wrapped_redirect",
-                                "subpage_from": "",
-                            }
-                        )
-        if not found and WRAPPER_USE_LOCATION_FALLBACK:
-            no_redirect = fetch_url(url, allow_redirects=False, timeout_secs=WRAPPER_TIMEOUT_SECS)
-            loc = (no_redirect.get("location") or "").strip()
-            if loc:
-                loc_abs = urljoin(url, loc)
-                for tracking_url in extract_tracking_from_raw(loc_abs, url):
-                    found.append(
-                        {
-                            "url": tracking_url,
-                            "via_type": "wrapped_redirect",
-                            "subpage_from": "",
-                        }
-                    )
 
+def probe_candidates(candidates, mode="wrapped"):
+    if not candidates:
+        return []
+    workers = SUBPAGE_WORKERS if mode == "subpage" else WRAPPER_WORKERS
+    probe_fn = discover_subpage_tracking_links if mode == "subpage" else discover_wrapped_tracking_links
     out = []
     seen = set()
-    for item in found:
-        val = item.get("url", "")
-        via_type = item.get("via_type", "")
-        subpage_from = item.get("subpage_from", "")
-        key = (
-            val.lower(),
-            via_type,
-            subpage_from.lower(),
-            str(item.get("context") or "").strip().lower(),
-            str(item.get("href") or "").strip().lower(),
-            int(item.get("node_id") or 0),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(item)
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {executor.submit(probe_fn, candidate): candidate for candidate in candidates}
+        for future in as_completed(future_map):
+            try:
+                items = future.result() or []
+            except Exception:
+                items = []
+            for item in items:
+                key = (
+                    str(item.get("url") or "").strip().lower(),
+                    str(item.get("via_type") or "").strip().lower(),
+                    str(item.get("wrapped_from") or "").strip().lower(),
+                    str(item.get("subpage_from") or "").strip().lower(),
+                    str(item.get("source_url") or "").strip().lower(),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(item)
     return out
 
 
