@@ -2,8 +2,9 @@ import json
 import os
 import re
 import threading
+import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.error import URLError
@@ -51,6 +52,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/notify":
             self._handle_notify()
+            return
+        if self.path == "/control":
+            self._handle_control()
             return
         if self.path != "/run":
             self._send(404, "Not Found", "text/plain; charset=utf-8")
@@ -116,6 +120,36 @@ class Handler(BaseHTTPRequestHandler):
         except URLError as exc:
             self._send(502, f"Notify failed: {exc}", "text/plain; charset=utf-8")
 
+    def _handle_control(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(length).decode("utf-8", errors="ignore")
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            self._send(400, "Invalid JSON", "text/plain; charset=utf-8")
+            return
+
+        job_id = str(payload.get("job_id", "")).strip()
+        action = str(payload.get("action", "")).strip().lower()
+        if not job_id or action not in ("pause", "resume"):
+            self._send(400, "Missing job_id or invalid action", "text/plain; charset=utf-8")
+            return
+
+        with JOBS_LOCK:
+            job = JOBS.get(job_id)
+            if not job:
+                self._send(404, "Job not found", "text/plain; charset=utf-8")
+                return
+            if job.get("done"):
+                body = json.dumps({"ok": False, "paused": bool(job.get("paused", False)), "message": "job_done"})
+                self._send(409, body, "application/json; charset=utf-8")
+                return
+            job["paused"] = action == "pause"
+            paused = bool(job["paused"])
+
+        body = json.dumps({"ok": True, "paused": paused})
+        self._send(200, body, "application/json; charset=utf-8")
+
     def do_OPTIONS(self):
         self._send(204, "", "text/plain; charset=utf-8")
 
@@ -148,6 +182,7 @@ class Handler(BaseHTTPRequestHandler):
                 "started": job.get("started", 0),
                 "current_domain": job.get("current_domain", ""),
                 "completed": job.get("completed", 0),
+                "paused": bool(job.get("paused", False)),
                 "done": job["done"],
                 "error": job["error"],
             }
@@ -221,6 +256,7 @@ def start_job(domains, ignore_https_redirect=False, scan_subpages=False, scan_wr
             "current_domain": "",
             "active_domains": [],
             "completed": 0,
+            "paused": False,
             "done": False,
             "error": "",
             "ignore_https_redirect": ignore_https_redirect,
@@ -247,41 +283,74 @@ def run_job(job_id, domains, ignore_https_redirect=False, scan_subpages=False, s
                 job = JOBS.get(job_id)
                 if not job:
                     return
-                job["started"] = len(tasks)
+                job["started"] = 0
             with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                pending = list(tasks)
                 future_map = {}
                 active_domains = set()
-                for idx, domain in tasks:
-                    future = executor.submit(
-                        process_domain,
-                        domain,
-                        header,
-                        ignore_https_redirect=ignore_https_redirect,
-                        scan_subpages=scan_subpages,
-                        scan_wrapped=scan_wrapped,
-                    )
-                    future_map[future] = (idx, domain)
-                    active_domains.add(domain)
+                started_count = 0
+                while pending or future_map:
                     with JOBS_LOCK:
                         job = JOBS.get(job_id)
                         if not job:
                             return
                         job["active_domains"] = sorted(active_domains)
-                        job["current_domain"] = ", ".join(job["active_domains"][:3])
+                        job["started"] = started_count
+                        paused = bool(job.get("paused", False))
+                        if paused and not active_domains:
+                            job["current_domain"] = "paused"
+                        else:
+                            job["current_domain"] = ", ".join(job["active_domains"][:3])
 
-                for future in as_completed(future_map):
-                    idx, domain = future_map[future]
-                    row, detail = future.result()
-                    active_domains.discard(domain)
-                    with JOBS_LOCK:
-                        job = JOBS.get(job_id)
-                        if not job:
-                            return
-                        job["rows"][idx] = row
-                        job["details"][idx] = detail
-                        job["completed"] = int(job.get("completed", 0)) + 1
-                        job["active_domains"] = sorted(active_domains)
-                        job["current_domain"] = ", ".join(job["active_domains"][:3])
+                    while not paused and pending and len(future_map) < worker_count:
+                        idx, domain = pending.pop(0)
+                        future = executor.submit(
+                            process_domain,
+                            domain,
+                            header,
+                            ignore_https_redirect=ignore_https_redirect,
+                            scan_subpages=scan_subpages,
+                            scan_wrapped=scan_wrapped,
+                        )
+                        future_map[future] = (idx, domain)
+                        active_domains.add(domain)
+                        started_count += 1
+                        with JOBS_LOCK:
+                            job = JOBS.get(job_id)
+                            if not job:
+                                return
+                            job["active_domains"] = sorted(active_domains)
+                            job["started"] = started_count
+                            job["current_domain"] = ", ".join(job["active_domains"][:3])
+
+                    if not future_map:
+                        time.sleep(0.2)
+                        continue
+
+                    done_futures, _pending_futures = wait(
+                        list(future_map.keys()),
+                        timeout=0.25,
+                        return_when=FIRST_COMPLETED,
+                    )
+                    if not done_futures:
+                        continue
+
+                    for future in done_futures:
+                        idx, domain = future_map.pop(future)
+                        row, detail = future.result()
+                        active_domains.discard(domain)
+                        with JOBS_LOCK:
+                            job = JOBS.get(job_id)
+                            if not job:
+                                return
+                            job["rows"][idx] = row
+                            job["details"][idx] = detail
+                            job["completed"] = int(job.get("completed", 0)) + 1
+                            job["active_domains"] = sorted(active_domains)
+                            if bool(job.get("paused", False)) and not active_domains:
+                                job["current_domain"] = "paused"
+                            else:
+                                job["current_domain"] = ", ".join(job["active_domains"][:3])
         with JOBS_LOCK:
             job = JOBS.get(job_id)
             if job:

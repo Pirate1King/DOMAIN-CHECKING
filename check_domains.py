@@ -554,7 +554,7 @@ def choose_best_page_result(results):
 def should_retry_page_status(status):
     if status == 0:
         return True
-    if status in (403, 404):
+    if status == 404:
         return True
     if 500 <= status < 600:
         return True
@@ -1517,7 +1517,6 @@ def process_domain(domain, out_header, ignore_https_redirect=False, scan_subpage
         "notes": ";".join(notes),
     }
 
-    time.sleep(0.2)
     return out_row, detail
 
 

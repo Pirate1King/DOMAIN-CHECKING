@@ -3,9 +3,9 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Domain Tracking Check</title>
+    <title>Kiểm tra domain và tracking</title>
     <style>
-      @import url("https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap");
+      @import url("https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap");
       :root {
         color-scheme: light;
         --bg: #060b09;
@@ -21,7 +21,7 @@
       * { box-sizing: border-box; }
       body {
         margin: 0;
-        font-family: "Share Tech Mono", "Consolas", monospace;
+        font-family: "Be Vietnam Pro", "Segoe UI", sans-serif;
         background:
           linear-gradient(0deg, var(--grid) 1px, transparent 1px),
           linear-gradient(90deg, var(--grid) 1px, transparent 1px),
@@ -45,8 +45,8 @@
       h1 {
         margin: 0;
         font-size: 28px;
-        letter-spacing: 1px;
-        text-transform: uppercase;
+        letter-spacing: 0.2px;
+        text-transform: none;
       }
       .subtitle {
         color: var(--muted);
@@ -69,6 +69,7 @@
         background: #04110a;
         color: var(--ink);
         resize: vertical;
+        font-family: "JetBrains Mono", "Consolas", monospace;
       }
       .row {
         display: flex;
@@ -119,6 +120,7 @@
         border-collapse: collapse;
         font-size: 13px;
         min-width: 920px;
+        font-family: "JetBrains Mono", "Consolas", monospace;
       }
       th, td {
         border: 1px solid var(--border);
@@ -190,6 +192,42 @@
         margin-top: 8px;
         color: var(--muted);
         font-size: 12px;
+      }
+      .progress-text,
+      .summary-box,
+      .tooltip,
+      .path-value,
+      .path-label {
+        font-family: "JetBrains Mono", "Consolas", monospace;
+      }
+      .job-toggle-btn.is-paused {
+        background: #07160f;
+        color: var(--ink);
+        border: 1px solid var(--border);
+        box-shadow: none;
+      }
+      .results-loader {
+        margin: 18px auto 6px;
+        width: 28px;
+        height: 28px;
+        border-radius: 50%;
+        border: 3px solid rgba(24, 255, 134, 0.18);
+        border-top-color: var(--accent);
+        animation: results-spin 0.8s linear infinite;
+      }
+      .summary-loader {
+        width: 22px;
+        height: 22px;
+        margin: 6px auto;
+        border-radius: 50%;
+        border: 3px solid rgba(24, 255, 134, 0.18);
+        border-top-color: var(--accent);
+        animation: results-spin 0.8s linear infinite;
+      }
+      @keyframes results-spin {
+        to {
+          transform: rotate(360deg);
+        }
       }
       .help-wrap {
         margin-top: 8px;
@@ -265,6 +303,10 @@
         cursor: pointer;
       }
       .subpage-scan-btn {
+        position: relative;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
         padding: 4px 8px;
         border-radius: 6px;
         border: 1px solid #1b5a3e;
@@ -280,6 +322,24 @@
       }
       .subpage-scan-btn:disabled {
         opacity: 0.55;
+      }
+      .subpage-scan-btn.is-loading {
+        border-color: #28c27e;
+        color: #d8ffe9;
+      }
+      .subpage-scan-btn.is-loading::after {
+        content: "";
+        width: 10px;
+        height: 10px;
+        border: 2px solid rgba(155, 231, 195, 0.35);
+        border-top-color: #9be7c3;
+        border-radius: 50%;
+        animation: subscan-spin 0.75s linear infinite;
+      }
+      @keyframes subscan-spin {
+        to {
+          transform: rotate(360deg);
+        }
       }
       .webhook-input {
         min-width: 320px;
@@ -563,61 +623,64 @@
   <body>
     <div class="wrap">
       <header>
-        <h1>Tracking Domain Checker</h1>
-        <div class="subtitle">Scan links containing a=mswl and flag 301/302/307/308</div>
+        <h1>Kiểm tra domain và tracking</h1>
+        <div class="subtitle">Scan links containing a=mswl</div>
       </header>
       <div class="panel">
-        <div class="hint">Paste one domain per line</div>
+        <div class="hint">Dán mỗi domain trên một dòng</div>
         <textarea id="domains"></textarea>
         <div class="row">
-          <button id="runBtn">Run Check</button>
-          <button id="egressIpBtn" class="copy-btn" type="button">Show Outbound IP</button>
+          <button id="runBtn">Chạy kiểm tra</button>
+          <button id="jobToggleBtn" class="job-toggle-btn" type="button" disabled>Tạm dừng</button>
           <label class="toggle">
             <input id="scanWrapped" type="checkbox">
             scan link bọc
           </label>
           <div id="status" class="hint"></div>
         </div>
+        <div class="footer-note">
+          <code>403</code> có thể bị ảnh hưởng bởi IP/VPN, môi trường chạy hoặc cơ chế chống bot/rate-limit, nên không phải lúc nào cũng phản ánh đúng tình trạng thực tế của domain.
+        </div>
       </div>
       <div class="panel">
-        <div class="hint">Results</div>
+        <div class="hint">Kết quả</div>
         <div class="actions">
           <button id="copyBtn" class="copy-btn" type="button">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M16 1H6a2 2 0 0 0-2 2v10h2V3h10V1zm3 4H10a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H10V7h9v14z"/>
             </svg>
-            Copy Error Summary
+            Sao chép tóm tắt lỗi
           </button>
           <button id="copyTableBtn" class="copy-btn" type="button">
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4 3h16a1 1 0 0 1 1 1v4h-2V5H5v14h4v2H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm6 6h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H10a1 1 0 0 1-1-1V10a1 1 0 0 1 1-1zm1 3v2h8v-2h-8zm0 4v2h8v-2h-8z"/>
             </svg>
-            Copy Table (Sheets)
+            Sao chép bảng (Sheets)
           </button>
           <button id="sendChatBtn" class="copy-btn" type="button">
-            Send To Google Chat
+            Gửi Google Chat
           </button>
           <div class="scroll-hint"></div>
         </div>
         <div class="actions">
-          <input id="webhookUrl" class="webhook-input" type="password" placeholder="Google Chat webhook URL">
+          <input id="webhookUrl" class="webhook-input" type="password" placeholder="Webhook Google Chat">
         </div>
         <div class="progress" aria-hidden="true">
           <div id="progressBar" class="progress-bar"></div>
         </div>
-        <div id="progressText" class="progress-text">Processed 0/0</div>
-        <div id="summaryBox" class="summary-box">No errors yet.</div>
+        <div id="progressText" class="progress-text">Đã xử lý 0/0</div>
+        <div id="summaryBox" class="summary-box">Chưa có lỗi.</div>
         <div id="results"></div>
         <div class="help-wrap">
           <span class="help-icon" tabindex="0" aria-label="Giải thích lỗi">i</span>
           <div class="help-tooltip" role="tooltip">
             <ol>
-              <li>Domain không truy cập được: Trang trả về 0, 4xx/5xx, DNS hoặc timeout.</li>
-              <li>Lỗi tracking (tracking_error): Link tracking redirect 301/302/307/308 sang domain khác.</li>
-              <li>Thiếu https: Link http bị redirect sang cùng link https.</li>
-              <li>Link bọc chưa đổi domain mới: Link trên UI đi qua link trung gian rồi mới ra tracking cũ.</li>
-              <li>Link nằm ở trang con: Từ link nội bộ vào trang con và phát hiện tracking lỗi trong trang đó.</li>
-              <li>No tracking links: Domain vào được nhưng không tìm thấy link chứa <code>a=mswl</code>.</li>
+              <li>Access failure: <code>0</code>, <code>4xx/5xx</code>, DNS, timeout.</li>
+              <li>Cross-domain redirect: <code>a=mswl</code> sang host khác.</li>
+              <li>HTTPS normalization: <code>http</code> -> <code>https</code> cùng link.</li>
+              <li>Wrapped link: UI link -> link trung gian -> tracking link.</li>
+              <li>Subpage discovery: tracking link nằm ở trang nội bộ.</li>
+              <li>No tracking: không có link chứa <code>a=mswl</code>.</li>
             </ol>
           </div>
         </div>
@@ -629,14 +692,14 @@
           <div id="tooltipTitle" class="tooltip-title"></div>
           <div id="tooltipSubtitle" class="tooltip-subtitle"></div>
         </div>
-        <button id="tooltipClose" class="tooltip-close" type="button">close</button>
+        <button id="tooltipClose" class="tooltip-close" type="button">đóng</button>
       </div>
       <div id="tooltipBody" class="tooltip-list"></div>
     </div>
     <script>
       const API_BASE = "";
       const runBtn = document.getElementById("runBtn");
-      const egressIpBtn = document.getElementById("egressIpBtn");
+      const jobToggleBtn = document.getElementById("jobToggleBtn");
       const scanWrappedEl = document.getElementById("scanWrapped");
       const statusEl = document.getElementById("status");
       const resultsEl = document.getElementById("results");
@@ -658,22 +721,39 @@
       let activeDetailCell = null;
       let activeDetailRow = null;
       let subscanRunningRows = new Set();
+      let subscanCompletedRows = new Set();
+      let currentJobId = "";
+      let currentJobPaused = false;
 
       function setStatus(text) {
         statusEl.textContent = text;
+      }
+
+      function setJobToggleState(enabled, paused) {
+        currentJobPaused = Boolean(paused);
+        if (!jobToggleBtn) return;
+        jobToggleBtn.disabled = !enabled;
+        jobToggleBtn.textContent = paused ? "Tiếp tục" : "Tạm dừng";
+        jobToggleBtn.classList.toggle("is-paused", Boolean(paused));
+      }
+
+      function renderPendingState() {
+        resultsEl.innerHTML = "<div class='results-loader' aria-hidden='true'></div>";
+        summaryBox.innerHTML = "<div class='summary-loader' aria-hidden='true'></div>";
       }
 
       function renderTable(header, rows) {
         const prevWrap = resultsEl.querySelector(".table-wrap");
         const prevScrollTop = prevWrap ? prevWrap.scrollTop : 0;
         const prevScrollLeft = prevWrap ? prevWrap.scrollLeft : 0;
+        const visibleHeader = (header || []).filter((col) => col !== "page_final_url");
 
         if (!rows.length) {
-          resultsEl.innerHTML = "<div class='hint'>No results.</div>";
+          resultsEl.innerHTML = "<div class='hint'>Chưa có kết quả.</div>";
           return;
         }
         let html = "<div class='table-wrap'><table><thead><tr>";
-        for (const col of header) {
+        for (const col of visibleHeader) {
           html += `<th>${col}</th>`;
         }
         html += "<th>subpage</th>";
@@ -688,19 +768,20 @@
           const notesVal = idxNotes >= 0 ? String(row[idxNotes] || "").toLowerCase() : "";
           const hasNoTracking = notesVal.includes("no_tracking_links");
           let dotClass = "ok";
-          let dotTitle = "OK";
+          let dotTitle = "Ổn";
           if (trackingErrorVal > 0) {
             dotClass = "bad";
-            dotTitle = "Tracking error";
+            dotTitle = "Lỗi tracking";
           } else if (pageStatusVal === 0 || pageStatusVal >= 400) {
             dotClass = "warn";
-            dotTitle = "Page status error";
+            dotTitle = "Lỗi truy cập trang";
           } else if (hasNoTracking) {
             dotClass = "info";
-            dotTitle = "No tracking link";
+            dotTitle = "Không có tracking link";
           }
           html += "<tr>";
           row.forEach((cell, idx) => {
+            if (header[idx] === "page_final_url") return;
             let value = cell === null || cell === undefined ? "" : String(cell);
             if (header[idx] === "tracking_ok") {
               const num = Number(value);
@@ -729,7 +810,11 @@
             }
           });
           const running = subscanRunningRows.has(sourceRowIdx);
-          html += `<td><button class="subpage-scan-btn" data-subscan-row="${sourceRowIdx}" ${running ? "disabled" : ""}>scan subpage</button></td>`;
+          const completed = subscanCompletedRows.has(sourceRowIdx);
+          const loadingClass = running ? " is-loading" : "";
+          const buttonText = running ? "đang quét..." : completed ? "đã quét" : "quét trang con";
+          const disabledAttr = running || completed ? "disabled" : "";
+          html += `<td><button class="subpage-scan-btn${loadingClass}" data-subscan-row="${sourceRowIdx}" ${disabledAttr}>${buttonText}</button></td>`;
           html += "</tr>";
         });
         html += "</tbody></table></div>";
@@ -773,6 +858,10 @@
         return pairs;
       }
 
+      function isReportableAccessStatus(pageStatus) {
+        return pageStatus !== 200 && pageStatus !== 403;
+      }
+
       function buildQcLines(header, rows, details) {
         if (!rows.length) return [];
         const idxDomain = header.indexOf("domain");
@@ -789,7 +878,7 @@
           const detail = details[rowIdx] || {};
           const badLinks = detail.tracking_error || [];
 
-          if (pageStatus !== 200) {
+          if (isReportableAccessStatus(pageStatus)) {
             if (pageStatus === 0) {
               lines.push(`${domain}: không truy cập được (${notes || "dns/network"})`);
             } else {
@@ -831,7 +920,7 @@
           const detail = details[rowIdx] || {};
           const badLinks = detail.tracking_error || [];
 
-          if (pageStatus !== 200) {
+          if (isReportableAccessStatus(pageStatus)) {
             if (pageStatus === 0) {
               groups.access.push(`${domain}: không truy cập được (${notes || "dns/network"})`);
             } else {
@@ -892,7 +981,7 @@
         rows.forEach((row) => {
           const pageStatus = Number(row[idxPageStatus] || 0);
           const trackingError = Number(row[idxTrackingError] || 0);
-          if (pageStatus !== 200 || trackingError > 0) {
+          if (isReportableAccessStatus(pageStatus) || trackingError > 0) {
             fail += 1;
           }
         });
@@ -902,10 +991,10 @@
       function buildErrorSummary(header, rows, details) {
         const groups = buildGroupedIssues(header, rows, details || []);
         const lines = groupedIssuesToLines(groups);
-        return lines.length ? lines.join("\n") : "No errors found.";
+        return lines.length ? lines.join("\n") : "Không có lỗi.";
       }
       function buildQcChatReport(header, rows, details) {
-        const lines = [`QC Report (${formatToday()})`];
+        const lines = [`Báo cáo QC (${formatToday()})`];
         const groups = buildGroupedIssues(header, rows, details || []);
         const issueLines = groupedIssuesToLines(groups);
         if (!issueLines.length) {
@@ -951,7 +1040,7 @@
         }
         if (!groupSections.length) {
           groupSections.push({
-            header: "Issues",
+            header: "Vấn đề",
             widgets: [{ textParagraph: { text: "không có lỗi." } }],
           });
         }
@@ -962,11 +1051,11 @@
               cardId: "qc-report",
               card: {
                 header: {
-                  title: `QC Report (${formatToday()})`,
+                  title: `Báo cáo QC (${formatToday()})`,
                 },
                 sections: [
                   {
-                    header: "Summary",
+                    header: "Tổng quan",
                     widgets: [
                       {
                         textParagraph: {
@@ -985,14 +1074,17 @@
       runBtn.addEventListener("click", async () => {
         const domains = parseDomains(textarea.value);
         if (!domains.length) {
-          setStatus("Please enter at least one domain.");
+          setStatus("Vui lòng nhập ít nhất một domain.");
           return;
         }
         runBtn.disabled = true;
-        setStatus("Starting...");
+        setJobToggleState(false, false);
+        setStatus("Đang bắt đầu quét...");
         progressBar.style.width = "0%";
-        progressText.textContent = `Processed 0/${domains.length}`;
-        resultsEl.innerHTML = "";
+        progressText.textContent = `Đã xử lý 0/${domains.length}`;
+        renderPendingState();
+        subscanRunningRows = new Set();
+        subscanCompletedRows = new Set();
         try {
           const resp = await fetch(`${API_BASE}/run`, {
             method: "POST",
@@ -1007,51 +1099,65 @@
             throw new Error(`Server error ${resp.status}`);
           }
           const data = await resp.json();
+          currentJobId = String(data.job_id || "");
+          setJobToggleState(Boolean(currentJobId), false);
           startPolling(data.job_id);
         } catch (err) {
           setStatus(String(err));
           runBtn.disabled = false;
+          currentJobId = "";
+          setJobToggleState(false, false);
         } finally {
           if (!pollTimer) {
             runBtn.disabled = false;
+            currentJobId = "";
+            setJobToggleState(false, false);
           }
+        }
+      });
+
+      jobToggleBtn.addEventListener("click", async () => {
+        if (!currentJobId) return;
+        const nextAction = currentJobPaused ? "resume" : "pause";
+        jobToggleBtn.disabled = true;
+        try {
+          const resp = await fetch(`${API_BASE}/control`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              job_id: currentJobId,
+              action: nextAction,
+            }),
+          });
+          const data = await resp.json();
+          if (!resp.ok) {
+            throw new Error(data.message || `Control error ${resp.status}`);
+          }
+          setJobToggleState(true, Boolean(data.paused));
+          setStatus(data.paused ? "Đã tạm dừng." : "Đã tiếp tục.");
+        } catch (err) {
+          setStatus(`Thao tác thất bại: ${err}`);
+          setJobToggleState(Boolean(currentJobId), currentJobPaused);
         }
       });
 
       copyBtn.addEventListener("click", async () => {
         if (!lastData) {
-          setStatus("No results to copy.");
+          setStatus("Chưa có kết quả để sao chép.");
           return;
         }
         const text = buildErrorSummary(lastData.header, lastData.rows, lastData.details || []);
         try {
           await navigator.clipboard.writeText(text);
-          setStatus("Copied error summary.");
+          setStatus("Đã sao chép tóm tắt lỗi.");
         } catch (err) {
-          setStatus("Copy failed: " + err);
-        }
-      });
-
-      egressIpBtn.addEventListener("click", async () => {
-        egressIpBtn.disabled = true;
-        setStatus("Checking outbound IP...");
-        try {
-          const resp = await fetch(`${API_BASE}/egress-ip`);
-          const data = await resp.json();
-          if (!resp.ok || !data.ip) {
-            throw new Error(data.error || `Server error ${resp.status}`);
-          }
-          setStatus(`Outbound IP: ${data.ip}`);
-        } catch (err) {
-          setStatus(`Outbound IP check failed: ${err}`);
-        } finally {
-          egressIpBtn.disabled = false;
+          setStatus("Sao chép thất bại: " + err);
         }
       });
 
       copyTableBtn.addEventListener("click", async () => {
         if (!lastData) {
-          setStatus("No results to copy.");
+          setStatus("Chưa có kết quả để sao chép.");
           return;
         }
         const header = lastData.header || [];
@@ -1067,20 +1173,20 @@
         });
         try {
           await navigator.clipboard.writeText(lines.join("\n"));
-          setStatus("Copied table for Sheets.");
+          setStatus("Đã sao chép bảng cho Sheets.");
         } catch (err) {
-          setStatus("Copy failed: " + err);
+          setStatus("Sao chép thất bại: " + err);
         }
       });
 
       sendChatBtn.addEventListener("click", async () => {
         if (!lastData) {
-          setStatus("No results to send.");
+          setStatus("Chưa có kết quả để gửi.");
           return;
         }
         const webhook = (webhookUrl.value || "").trim();
         if (!webhook) {
-          setStatus("Enter Google Chat webhook URL.");
+          setStatus("Vui lòng nhập webhook Google Chat.");
           return;
         }
         const message = buildQcChatReport(lastData.header, lastData.rows, lastData.details || []);
@@ -1099,9 +1205,9 @@
             const errText = await resp.text();
             throw new Error(errText || `Notify error ${resp.status}`);
           }
-          setStatus("Sent to Google Chat.");
+          setStatus("Đã gửi lên Google Chat.");
         } catch (err) {
-          setStatus("Send failed: " + err);
+          setStatus("Gửi thất bại: " + err);
         }
       });
 
@@ -1157,7 +1263,7 @@
         tooltipTitle.textContent = title;
         tooltipSubtitle.textContent = subtitle || "";
         if (!list.length) {
-          tooltipBody.textContent = "no link details returned. restart the ui server and run again.";
+          tooltipBody.textContent = "Không có dữ liệu chi tiết. Hãy khởi động lại UI server rồi chạy lại.";
         } else {
           tooltipBody.innerHTML = list.map((item, idx) => {
             const link = escapeHtml(String(item.link || ""));
@@ -1170,7 +1276,7 @@
             const subpageFromRaw = String(item.subpage_from || "");
             const subpageFrom = escapeHtml(subpageFromRaw);
             const subpageOpenButton = subpageFrom
-              ? `<a class="tooltip-open-link" href="${subpageFrom}" target="_blank" rel="noopener noreferrer">open subpage</a>`
+              ? `<a class="tooltip-open-link" href="${subpageFrom}" target="_blank" rel="noopener noreferrer">mở trang con</a>`
               : "";
             const sourcePill = subpageFromRaw
               ? `<div class="tooltip-pill subpage">nguồn: trang con</div>`
@@ -1246,17 +1352,14 @@
         const detailType = cell.dataset.detail;
         const detail = (lastData.details || [])[rowIdx] || {};
         const list = detail[detailType] || [];
-        const title = detailType === "tracking_ok" ? "ok tracking links" : "error tracking links";
+        const title = detailType === "tracking_ok" ? "Link tracking hợp lệ" : "Link tracking lỗi";
         const header = lastData.header || [];
         const rows = lastData.rows || [];
         const domainIdx = header.indexOf("domain");
         const domain = domainIdx >= 0 && rows[rowIdx] ? rows[rowIdx][domainIdx] : "";
-        const pageFinalIdx = header.indexOf("page_final_url");
         const pageUrlIdx = header.indexOf("page_url");
-        const pageUrlForLocate =
-          (pageFinalIdx >= 0 && rows[rowIdx] ? rows[rowIdx][pageFinalIdx] : "") ||
-          (pageUrlIdx >= 0 && rows[rowIdx] ? rows[rowIdx][pageUrlIdx] : "");
-        const subtitle = `Row ${rowIdx + 1}${domain ? ` • ${domain}` : ""}`;
+        const pageUrlForLocate = pageUrlIdx >= 0 && rows[rowIdx] ? rows[rowIdx][pageUrlIdx] : "";
+        const subtitle = `Dòng ${rowIdx + 1}${domain ? ` • ${domain}` : ""}`;
         showTooltip(cell, title, subtitle, list, pageUrlForLocate);
       });
       tooltipClose.addEventListener("click", hideTooltip);
@@ -1279,39 +1382,52 @@
           try {
             const resp = await fetch(`${API_BASE}/status?job=${jobId}`);
             if (!resp.ok) {
-              throw new Error(`Status error ${resp.status}`);
+              throw new Error(`Lỗi trạng thái ${resp.status}`);
             }
             const data = await resp.json();
             lastData = data;
-            renderTable(data.header, data.rows);
-            summaryBox.innerHTML = renderSummaryBox(data.header, data.rows, data.details || []);
+            currentJobPaused = Boolean(data.paused);
+            setJobToggleState(!data.done, currentJobPaused);
+            if ((data.rows || []).length) {
+              renderTable(data.header, data.rows);
+              summaryBox.innerHTML = renderSummaryBox(data.header, data.rows, data.details || []);
+            } else if (!data.done) {
+              renderPendingState();
+            }
             if (data.error) {
-              setStatus(`Error: ${data.error}`);
+              setStatus(`Lỗi: ${data.error}`);
               clearInterval(pollTimer);
               pollTimer = null;
               runBtn.disabled = false;
+              currentJobId = "";
+              setJobToggleState(false, false);
               return;
             }
             const total = data.total || 0;
-            const done = data.rows.length || 0;
+            const done = Number(data.completed || ((data.rows || []).length || 0));
             const started = Number(data.started || 0);
             const pct = total ? Math.round((done / total) * 100) : 0;
             progressBar.style.width = `${pct}%`;
-            const runningText = started > done ? ` | Running ${started}/${total}` : "";
+            const runningText = started > done ? ` | Đã chạy ${started}/${total}` : "";
+            const pausedText = data.paused ? " | Đã tạm dừng" : "";
             const currentDomainText = data.current_domain ? ` | ${data.current_domain}` : "";
-            progressText.textContent = `Processed ${done}/${total}${runningText}`;
-            setStatus(`Processed ${done}/${total}${runningText}${currentDomainText}`);
+            progressText.textContent = `Đã xử lý ${done}/${total}${runningText}`;
+            setStatus(`Đã xử lý ${done}/${total}${runningText}${pausedText}${currentDomainText}`);
             if (data.done) {
               clearInterval(pollTimer);
               pollTimer = null;
-              setStatus(`Done. ${data.rows.length} domains.`);
+              setStatus(`Hoàn tất. ${data.rows.length} domain.`);
               runBtn.disabled = false;
+              currentJobId = "";
+              setJobToggleState(false, false);
             }
           } catch (err) {
             setStatus(String(err));
             clearInterval(pollTimer);
             pollTimer = null;
             runBtn.disabled = false;
+            currentJobId = "";
+            setJobToggleState(false, false);
           }
         }, 1000);
       }
@@ -1320,7 +1436,7 @@
         while (true) {
           const resp = await fetch(`${API_BASE}/status?job=${jobId}`);
           if (!resp.ok) {
-            throw new Error(`Status error ${resp.status}`);
+            throw new Error(`Lỗi trạng thái ${resp.status}`);
           }
           const data = await resp.json();
           if (data.error) {
@@ -1343,7 +1459,7 @@
         if (subscanRunningRows.has(rowIdx)) return;
         subscanRunningRows.add(rowIdx);
         renderTable(lastData.header, lastData.rows);
-        setStatus(`subpage scan: ${domain}...`);
+        setStatus(`Đang quét trang con: ${domain}...`);
         try {
           const resp = await fetch(`${API_BASE}/run`, {
             method: "POST",
@@ -1355,7 +1471,7 @@
             }),
           });
           if (!resp.ok) {
-            throw new Error(`server error ${resp.status}`);
+            throw new Error(`Lỗi máy chủ ${resp.status}`);
           }
           const { job_id } = await resp.json();
           const doneData = await waitJobDone(job_id);
@@ -1365,11 +1481,12 @@
           if ((doneData.details || []).length) {
             lastData.details[rowIdx] = doneData.details[0];
           }
+          subscanCompletedRows.add(rowIdx);
           renderTable(lastData.header, lastData.rows);
           summaryBox.innerHTML = renderSummaryBox(lastData.header, lastData.rows, lastData.details || []);
-          setStatus(`subpage scan done: ${domain}`);
+          setStatus(`Quét trang con xong: ${domain}`);
         } catch (err) {
-          setStatus(`subpage scan failed: ${err}`);
+          setStatus(`Quét trang con thất bại: ${err}`);
         } finally {
           subscanRunningRows.delete(rowIdx);
           renderTable(lastData.header, lastData.rows);
@@ -1398,8 +1515,8 @@
         const summary = buildErrorSummary(header, rows, details || []);
         const stats = computeReportStats(header, rows);
         const statLine = `<div>Total case: ${stats.total} | Pass: ${stats.pass} | Fail: ${stats.fail}</div>`;
-        if (summary === "No errors found." || summary === "No results.") {
-          return `${statLine}<div>No errors yet.</div>`;
+        if (summary === "Không có lỗi." || summary === "Chưa có kết quả.") {
+          return `${statLine}<div>Chưa có lỗi.</div>`;
         }
         const issues = summary.split("\n").map((line) => {
           return `<div class="summary-error">${line}</div>`;
