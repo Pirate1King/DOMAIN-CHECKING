@@ -5,6 +5,7 @@ import re
 import threading
 import time
 import uuid
+import zipfile
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -59,6 +60,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/artifacts/"):
             self._handle_artifact()
+            return
+        if self.path.startswith("/viewport/download"):
+            self._handle_viewport_download()
             return
         if self.path.startswith("/viewport/status"):
             self._handle_viewport_status()
@@ -207,7 +211,11 @@ class Handler(BaseHTTPRequestHandler):
         if not ok:
             self._send(400, error_message, "text/plain; charset=utf-8")
             return
-        job_id = start_viewport_job(urls[0])
+        capture_mode = str(payload.get("capture_mode", "fold")).strip().lower()
+        if capture_mode not in ("fold", "full"):
+            self._send(400, "Invalid capture_mode", "text/plain; charset=utf-8")
+            return
+        job_id = start_viewport_job(urls[0], capture_mode=capture_mode)
         body = json.dumps({"job_id": job_id})
         self._send(200, body, "application/json; charset=utf-8")
 
@@ -376,9 +384,37 @@ class Handler(BaseHTTPRequestHandler):
                 "done": job["done"],
                 "error": job["error"],
                 "current_view": job.get("current_view", ""),
+                "capture_mode": job.get("capture_mode", "fold"),
             }
         body = json.dumps(payload)
         self._send(200, body, "application/json; charset=utf-8")
+
+    def _handle_viewport_download(self):
+        query = self.path.split("?", 1)
+        if len(query) < 2:
+            self._send(400, "Missing job id", "text/plain; charset=utf-8")
+            return
+        params = query[1].split("&")
+        job_id = ""
+        for param in params:
+            if param.startswith("job="):
+                job_id = param.split("=", 1)[1]
+                break
+        if not job_id:
+            self._send(400, "Missing job id", "text/plain; charset=utf-8")
+            return
+        zip_path = ARTIFACT_ROOT / job_id / "viewport-gallery.zip"
+        if not zip_path.is_file():
+            self._send(404, "Download not ready", "text/plain; charset=utf-8")
+            return
+        data = zip_path.read_bytes()
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Disposition", f'attachment; filename="{job_id}-viewport-gallery.zip"')
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
 
     def _handle_geo_profiles(self):
         profiles = list_network_profiles()
@@ -669,7 +705,7 @@ def start_audit_job(urls, kind="audit", profile_name="direct"):
     return job_id
 
 
-def start_viewport_job(url):
+def start_viewport_job(url, capture_mode="fold"):
     job_id = uuid.uuid4().hex
     with JOBS_LOCK:
         JOBS[job_id] = {
@@ -681,10 +717,11 @@ def start_viewport_job(url):
             "done": False,
             "error": "",
             "current_view": "",
+            "capture_mode": capture_mode,
         }
     thread = threading.Thread(
         target=run_viewport_job,
-        args=(job_id, url),
+        args=(job_id, url, capture_mode),
         daemon=True,
     )
     thread.start()
@@ -776,7 +813,7 @@ def run_job(job_id, domains, ignore_https_redirect=False, scan_subpages=False, s
                 job["error"] = str(exc)
 
 
-def run_viewport_job(job_id, url):
+def run_viewport_job(job_id, url, capture_mode):
     from playwright.sync_api import Error as PlaywrightError
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     from playwright.sync_api import sync_playwright
@@ -793,13 +830,14 @@ def run_viewport_job(job_id, url):
                         if not job:
                             return
                         job["current_view"] = preset["label"]
-                    shot = capture_viewport_shot(browser, url, job_id, idx, preset, artifact_dir)
+                    shot = capture_viewport_shot(browser, url, job_id, idx, preset, artifact_dir, capture_mode=capture_mode)
                     with JOBS_LOCK:
                         job = JOBS.get(job_id)
                         if not job:
                             return
                         job["shots"][idx] = shot
                         job["completed"] = int(job.get("completed", 0)) + 1
+                build_viewport_zip(job_id, artifact_dir)
             finally:
                 browser.close()
         with JOBS_LOCK:
@@ -1192,7 +1230,7 @@ def audit_viewport(browser, url, viewport, screenshot_path, is_mobile=False):
     return meta
 
 
-def capture_viewport_shot(browser, url, job_id, idx, preset, artifact_dir):
+def capture_viewport_shot(browser, url, job_id, idx, preset, artifact_dir, capture_mode="fold"):
     name = sanitize_slug(preset["name"])
     screenshot_name = f"{idx + 1:03d}-{name}.png"
     screenshot_path = artifact_dir / screenshot_name
@@ -1215,7 +1253,45 @@ def capture_viewport_shot(browser, url, job_id, idx, preset, artifact_dir):
         page.wait_for_load_state("networkidle", timeout=3000)
     except Exception:
         pass
-    page.screenshot(path=str(screenshot_path), full_page=False)
+    layout_metrics = page.evaluate(
+        """() => {
+          const body = document.body;
+          const html = document.documentElement;
+          const docWidth = Math.max(body ? body.scrollWidth : 0, html ? html.scrollWidth : 0);
+          const vw = window.innerWidth || 0;
+          const overflowing = Array.from(document.querySelectorAll('body *')).filter((el) => {
+            const style = window.getComputedStyle(el);
+            if (!style || style.display === 'none' || style.visibility === 'hidden') return false;
+            const rect = el.getBoundingClientRect();
+            return rect.right - vw > 24 || rect.left < -24;
+          }).slice(0, 10);
+          const tinyText = Array.from(document.querySelectorAll('body *')).filter((el) => {
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            const fontSize = parseFloat(style.fontSize || '0');
+            return fontSize > 0 && fontSize < 10 && rect.width > 80 && rect.height > 10;
+          }).length;
+          return {
+            docWidth,
+            viewportWidth: vw,
+            overflowCount: overflowing.length,
+            tinyTextCount: tinyText,
+            horizontalOverflow: docWidth > vw + 24,
+          };
+        }"""
+    )
+    page.screenshot(path=str(screenshot_path), full_page=(capture_mode == "full"))
+    horizontal_overflow = bool(layout_metrics.get("horizontalOverflow"))
+    overflow_count = int(layout_metrics.get("overflowCount") or 0)
+    tiny_text_count = int(layout_metrics.get("tinyTextCount") or 0)
+    layout_break_risk = horizontal_overflow or overflow_count > 0 or tiny_text_count > 5
+    layout_flags = []
+    if horizontal_overflow:
+        layout_flags.append("horizontal_overflow")
+    if overflow_count > 0:
+        layout_flags.append("offscreen_elements")
+    if tiny_text_count > 5:
+        layout_flags.append("tiny_text")
     shot = {
         "label": preset["label"],
         "device_type": preset["device_type"],
@@ -1225,9 +1301,22 @@ def capture_viewport_shot(browser, url, job_id, idx, preset, artifact_dir):
         "load_ms": load_ms,
         "final_url": page.url,
         "image_url": artifact_url(job_id, screenshot_name),
+        "capture_mode": capture_mode,
+        "layout_break_risk": layout_break_risk,
+        "horizontal_overflow": horizontal_overflow,
+        "overflow_count": overflow_count,
+        "tiny_text_count": tiny_text_count,
+        "layout_flags": layout_flags,
     }
     context.close()
     return shot
+
+
+def build_viewport_zip(job_id, artifact_dir):
+    zip_path = artifact_dir / "viewport-gallery.zip"
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for file_path in sorted(artifact_dir.glob("*.png")):
+            zf.write(file_path, arcname=file_path.name)
 
 
 if __name__ == "__main__":

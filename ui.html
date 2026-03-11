@@ -579,6 +579,12 @@
         color: #d2ffe8;
         font: 11px "JetBrains Mono", "Consolas", monospace;
       }
+      .viewport-actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
       .progress-text,
       .summary-box,
       .tooltip,
@@ -1235,8 +1241,13 @@
         <div class="panel">
           <div class="hint">Dán đúng 1 landing page URL để chụp nhiều viewport phổ biến</div>
           <textarea id="viewportUrl" placeholder="https://example.com/landing-a"></textarea>
-          <div class="row">
+          <div class="row viewport-actions">
+            <select id="viewportMode" class="webhook-input">
+              <option value="fold">Above the fold</option>
+              <option value="full">Full page</option>
+            </select>
             <button id="viewportRunBtn">Run Viewport</button>
+            <button id="viewportDownloadBtn" class="copy-btn" type="button" disabled>Download All</button>
             <div id="viewportStatus" class="hint"></div>
           </div>
           <div class="footer-note">
@@ -1328,6 +1339,8 @@
       const geoAuditObservedIp = document.getElementById("geoAuditObservedIp");
       const geoAuditObservedMeta = document.getElementById("geoAuditObservedMeta");
       const viewportRunBtn = document.getElementById("viewportRunBtn");
+      const viewportModeEl = document.getElementById("viewportMode");
+      const viewportDownloadBtn = document.getElementById("viewportDownloadBtn");
       const viewportUrlEl = document.getElementById("viewportUrl");
       const viewportStatusEl = document.getElementById("viewportStatus");
       const viewportProgressBar = document.getElementById("viewportProgressBar");
@@ -1339,6 +1352,7 @@
       let lastGeoAuditData = null;
       let geoProfiles = [];
       let lastViewportData = null;
+      let lastViewportJobId = "";
       let pollTimer = null;
       let auditPollTimer = null;
       let geoAuditPollTimer = null;
@@ -1489,6 +1503,7 @@
       function renderViewportPendingState() {
         viewportResultsEl.innerHTML = "<div class='results-loader' aria-hidden='true'></div>";
         viewportSummaryBox.textContent = "Đang chụp viewport...";
+        viewportDownloadBtn.disabled = true;
       }
 
       function renderTable(header, rows) {
@@ -2491,7 +2506,13 @@
                 <span class="audit-badge ${String(shot.device_type || "").toLowerCase() === "desktop" ? "match" : String(shot.device_type || "").toLowerCase() === "tablet" ? "warn" : "mismatch"}">${escapeHtml(String(shot.device_type || ""))}</span>
               </div>
               <div class="viewport-dim">${Number(shot.width || 0)} x ${Number(shot.height || 0)}</div>
-              <div class="viewport-stats">status ${Number(shot.status || 0) || "-"} | load ${Number(shot.load_ms || 0)} ms</div>
+              <div class="viewport-stats">status ${Number(shot.status || 0) || "-"} | load ${Number(shot.load_ms || 0)} ms | ${escapeHtml(String(shot.capture_mode || "fold"))}</div>
+              <div class="audit-badge-pack">
+                ${shot.layout_break_risk ? `<span class="audit-badge mismatch">layout risk</span>` : `<span class="audit-badge match">layout clean</span>`}
+                ${shot.horizontal_overflow ? `<span class="audit-badge mismatch">overflow</span>` : ""}
+                ${Number(shot.overflow_count || 0) > 0 ? `<span class="audit-badge warn">offscreen ${Number(shot.overflow_count || 0)}</span>` : ""}
+                ${Number(shot.tiny_text_count || 0) > 5 ? `<span class="audit-badge warn">tiny text ${Number(shot.tiny_text_count || 0)}</span>` : ""}
+              </div>
             </div>
           </div>
         `).join("")}</div>`;
@@ -2504,7 +2525,8 @@
         }
         const statusBad = shots.filter((shot) => Number(shot.status || 0) >= 400 || Number(shot.status || 0) === 0).length;
         const slow = shots.filter((shot) => Number(shot.load_ms || 0) >= 5000).length;
-        return `<div>Total view: ${shots.length} | Bad status: ${statusBad} | Slow: ${slow}</div>`;
+        const layoutRisk = shots.filter((shot) => Boolean(shot.layout_break_risk)).length;
+        return `<div>Total view: ${shots.length} | Bad status: ${statusBad} | Slow: ${slow} | Layout risk: ${layoutRisk}</div>`;
       }
 
       async function loadGeoProfiles() {
@@ -2746,6 +2768,7 @@
               clearInterval(viewportPollTimer);
               viewportPollTimer = null;
               viewportRunBtn.disabled = false;
+              viewportDownloadBtn.disabled = !(data.shots || []).length;
               setViewportStatus(`Viewport gallery hoàn tất. ${done} view.`);
             }
           } catch (err) {
@@ -2753,6 +2776,7 @@
             clearInterval(viewportPollTimer);
             viewportPollTimer = null;
             viewportRunBtn.disabled = false;
+            viewportDownloadBtn.disabled = true;
           }
         }, 1000);
       }
@@ -2765,6 +2789,7 @@
         }
         activateView("viewport");
         viewportRunBtn.disabled = true;
+        viewportDownloadBtn.disabled = true;
         setViewportStatus("Đang bắt đầu viewport gallery...");
         viewportProgressBar.style.width = "0%";
         viewportProgressText.textContent = "Đã xử lý 0/10";
@@ -2773,18 +2798,28 @@
           const resp = await fetch(`${API_BASE}/viewport/run`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ url: urls[0] }),
+            body: JSON.stringify({ url: urls[0], capture_mode: String(viewportModeEl.value || "fold") }),
           });
           if (!resp.ok) {
             const message = await resp.text();
             throw new Error(message || `Lỗi máy chủ ${resp.status}`);
           }
           const data = await resp.json();
+          lastViewportJobId = data.job_id;
           startViewportPolling(data.job_id);
         } catch (err) {
           setViewportStatus(String(err));
           viewportRunBtn.disabled = false;
+          viewportDownloadBtn.disabled = true;
         }
+      });
+
+      viewportDownloadBtn.addEventListener("click", () => {
+        if (!lastViewportData || !lastViewportData.done || !lastViewportJobId) {
+          setViewportStatus("Chưa có gallery hoàn tất để tải.");
+          return;
+        }
+        window.open(`${API_BASE}/viewport/download?job=${encodeURIComponent(lastViewportJobId)}`, "_blank", "noopener");
       });
 
       loadGeoProfiles();
