@@ -7,7 +7,9 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+from contextlib import contextmanager
 from html.parser import HTMLParser
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, quote, unquote, urljoin, urlparse, urlsplit, urlunsplit
@@ -34,11 +36,14 @@ ANALYZE_WORKERS = 8
 MAX_WRAPPER_PROBES = 18
 MAX_SUBPAGE_PROBES = 24
 WRAPPER_TIMEOUT_SECS = 3
-WRAPPER_WORKERS = 8
-SUBPAGE_WORKERS = 6
+WRAPPER_WORKERS = 4
+SUBPAGE_WORKERS = 3
+HOST_CONCURRENCY_LIMIT = 2
 WRAPPER_USE_LOCATION_FALLBACK = True
 PAGE_RETRY_DELAY_SECS = 0.6
 DOH_CACHE = {}
+HOST_LIMITERS = {}
+HOST_LIMITERS_LOCK = threading.Lock()
 DOH_ENDPOINTS = (
     "https://dns.google/resolve?name={name}&type=A",
     "https://cloudflare-dns.com/dns-query?name={name}&type=A",
@@ -281,13 +286,43 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
+def _semaphore_for_host(host):
+    key = str(host or "").strip().lower()
+    if not key:
+        return None
+    with HOST_LIMITERS_LOCK:
+        sem = HOST_LIMITERS.get(key)
+        if sem is None:
+            sem = threading.Semaphore(HOST_CONCURRENCY_LIMIT)
+            HOST_LIMITERS[key] = sem
+    return sem
+
+
+@contextmanager
+def host_request_slot(url):
+    try:
+        host = (urlparse(str(url or "")).hostname or "").strip().lower()
+    except Exception:
+        host = ""
+    sem = _semaphore_for_host(host)
+    if sem is None:
+        yield
+        return
+    sem.acquire()
+    try:
+        yield
+    finally:
+        sem.release()
+
+
 def _open_url(url, allow_redirects=True, timeout_secs=TIMEOUT_SECS):
     handlers = []
     if not allow_redirects:
         handlers.append(NoRedirect())
     opener = build_opener(*handlers)
     req = Request(url, headers=BROWSER_HEADERS)
-    return opener.open(req, timeout=timeout_secs)
+    with host_request_slot(url):
+        return opener.open(req, timeout=timeout_secs)
 
 
 def is_dns_error(exc):
@@ -355,72 +390,73 @@ def fetch_url_via_curl(url, allow_redirects=True, timeout_secs=TIMEOUT_SECS, res
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
     resolve_targets = [resolved_ip] if resolved_ip else [None]
     last_error = ""
-    for ip in resolve_targets:
-        with tempfile.NamedTemporaryFile() as header_file, tempfile.NamedTemporaryFile() as body_file:
-            cmd = [
-                "curl",
-                "-sS",
-                "--http1.1",
-                "--max-time",
-                str(int(timeout_secs)),
-                "--connect-timeout",
-                str(max(2, min(int(timeout_secs), 5))),
-                "-A",
-                USER_AGENT,
-                "-H",
-                f"Accept: {BROWSER_HEADERS['Accept']}",
-                "-H",
-                f"Accept-Language: {BROWSER_HEADERS['Accept-Language']}",
-                "-H",
-                "Cache-Control: no-cache",
-                "-H",
-                "Pragma: no-cache",
-                "-H",
-                "Upgrade-Insecure-Requests: 1",
-                "-D",
-                header_file.name,
-                "-o",
-                body_file.name,
-                "-w",
-                "%{http_code}\n%{url_effective}",
-            ]
-            if ip:
-                cmd.extend(["--resolve", f"{host}:{port}:{ip}"])
-            if allow_redirects:
-                cmd.append("-L")
-            cmd.append(url)
+    with host_request_slot(url):
+        for ip in resolve_targets:
+            with tempfile.NamedTemporaryFile() as header_file, tempfile.NamedTemporaryFile() as body_file:
+                cmd = [
+                    "curl",
+                    "-sS",
+                    "--http1.1",
+                    "--max-time",
+                    str(int(timeout_secs)),
+                    "--connect-timeout",
+                    str(max(2, min(int(timeout_secs), 5))),
+                    "-A",
+                    USER_AGENT,
+                    "-H",
+                    f"Accept: {BROWSER_HEADERS['Accept']}",
+                    "-H",
+                    f"Accept-Language: {BROWSER_HEADERS['Accept-Language']}",
+                    "-H",
+                    "Cache-Control: no-cache",
+                    "-H",
+                    "Pragma: no-cache",
+                    "-H",
+                    "Upgrade-Insecure-Requests: 1",
+                    "-D",
+                    header_file.name,
+                    "-o",
+                    body_file.name,
+                    "-w",
+                    "%{http_code}\n%{url_effective}",
+                ]
+                if ip:
+                    cmd.extend(["--resolve", f"{host}:{port}:{ip}"])
+                if allow_redirects:
+                    cmd.append("-L")
+                cmd.append(url)
 
-            try:
-                proc = subprocess.run(
-                    cmd,
-                    capture_output=True,
-                    text=True,
-                    timeout=max(timeout_secs + 2, 5),
-                    check=False,
-                )
-            except Exception as exc:
-                last_error = str(exc)
-                continue
+                try:
+                    proc = subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=max(timeout_secs + 2, 5),
+                        check=False,
+                    )
+                except Exception as exc:
+                    last_error = str(exc)
+                    continue
 
-            if proc.returncode != 0:
-                last_error = (proc.stderr or proc.stdout or "").strip() or f"curl_exit:{proc.returncode}"
-                continue
+                if proc.returncode != 0:
+                    last_error = (proc.stderr or proc.stdout or "").strip() or f"curl_exit:{proc.returncode}"
+                    continue
 
-            header_text = header_file.read().decode("utf-8", errors="ignore")
-            body = body_file.read()
-            lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
-            try:
-                status = int(lines[-2]) if len(lines) >= 2 else 0
-            except ValueError:
-                status = 0
-            final_url = lines[-1] if lines else url
-            return {
-                "status": status,
-                "final_url": final_url,
-                "body": body,
-                "error": "",
-                "location": parse_location_from_headers(header_text),
-            }
+                header_text = header_file.read().decode("utf-8", errors="ignore")
+                body = body_file.read()
+                lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+                try:
+                    status = int(lines[-2]) if len(lines) >= 2 else 0
+                except ValueError:
+                    status = 0
+                final_url = lines[-1] if lines else url
+                return {
+                    "status": status,
+                    "final_url": final_url,
+                    "body": body,
+                    "error": "",
+                    "location": parse_location_from_headers(header_text),
+                }
 
     if last_error:
         return {
