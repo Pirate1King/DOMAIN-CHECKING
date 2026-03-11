@@ -746,6 +746,25 @@ def artifact_url(job_id, filename):
     return f"/artifacts/{job_id}/{filename}"
 
 
+def normalize_asn(value):
+    text = str(value or "").strip().upper()
+    if not text:
+        return ""
+    match = re.search(r"AS\s*(\d+)", text)
+    if match:
+        return match.group(1)
+    digits = re.sub(r"\D+", "", text)
+    return digits
+
+
+def extract_observed_asn(org_text):
+    text = str(org_text or "").strip().upper()
+    if not text:
+        return ""
+    match = re.search(r"AS\s*(\d+)", text)
+    return match.group(1) if match else ""
+
+
 def audit_landing_page(url, job_id, row_idx, profile=None, network_info=None):
     from playwright.sync_api import Error as PlaywrightError
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
@@ -789,6 +808,7 @@ def audit_landing_page(url, job_id, row_idx, profile=None, network_info=None):
         "observed_country": str((network_info or {}).get("country") or ""),
         "observed_org": str((network_info or {}).get("org") or ""),
         "observed_city": str((network_info or {}).get("city") or ""),
+        "observed_asn": extract_observed_asn((network_info or {}).get("org") or ""),
     }
 
     with sync_playwright() as p:
@@ -878,7 +898,7 @@ def audit_landing_page(url, job_id, row_idx, profile=None, network_info=None):
         notes.append("console_error")
     if result["expected_country"] and result["observed_country"] and result["expected_country"].lower() != result["observed_country"].lower():
         notes.append("country_mismatch")
-    if result["expected_asn"] and result["observed_org"] and result["expected_asn"].lower() not in result["observed_org"].lower():
+    if normalize_asn(result["expected_asn"]) and normalize_asn(result["expected_asn"]) != normalize_asn(result["observed_asn"]):
         notes.append("asn_mismatch")
     if result["expected_carrier"] and result["observed_org"] and result["expected_carrier"].lower() not in result["observed_org"].lower():
         notes.append("carrier_mismatch")

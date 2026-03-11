@@ -507,6 +507,35 @@
         text-transform: uppercase;
         letter-spacing: 0.4px;
       }
+      .audit-badge-pack {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-top: 6px;
+      }
+      .audit-badge {
+        display: inline-flex;
+        align-items: center;
+        padding: 3px 7px;
+        border-radius: 999px;
+        border: 1px solid rgba(34, 201, 122, 0.26);
+        background: rgba(9, 28, 18, 0.8);
+        font: 10px "JetBrains Mono", "Consolas", monospace;
+        letter-spacing: 0.35px;
+        text-transform: uppercase;
+      }
+      .audit-badge.match {
+        color: #9cffca;
+        border-color: rgba(34, 201, 122, 0.4);
+      }
+      .audit-badge.mismatch {
+        color: #ffb0b0;
+        border-color: rgba(255, 95, 95, 0.45);
+      }
+      .audit-badge.warn {
+        color: #ffe08a;
+        border-color: rgba(255, 208, 94, 0.4);
+      }
       .progress-text,
       .summary-box,
       .tooltip,
@@ -2266,8 +2295,12 @@
         });
         html += "</tr></thead><tbody>";
         items.forEach((item) => {
+          const notesText = String(item.notes || "");
           const statusCode = Number(item.http_status || 0);
-          const hasMismatch = String(item.notes || "").includes("country_mismatch") || String(item.notes || "").includes("carrier_mismatch") || String(item.notes || "").includes("asn_mismatch");
+          const countryMismatch = notesText.includes("country_mismatch");
+          const carrierMismatch = notesText.includes("carrier_mismatch");
+          const asnMismatch = notesText.includes("asn_mismatch");
+          const hasMismatch = countryMismatch || carrierMismatch || asnMismatch;
           const hasIssue = Boolean(item.error) || Number(item.blocked_cta || 0) > 0 || Number(item.broken_images || 0) > 0 || Boolean(item.blank_risk) || hasMismatch;
           const statusClass = statusCode >= 200 && statusCode < 400 && !item.error ? "status ok" : "status bad";
           const noteClass = hasIssue ? "audit-note-bad" : "audit-note-warn";
@@ -2276,6 +2309,7 @@
           const observedIp = escapeHtml(String(item.observed_ip || "-"));
           const observedCountry = escapeHtml(String(item.observed_country || "-"));
           const observedOrg = escapeHtml(String(item.observed_org || "-"));
+          const observedAsn = escapeHtml(String(item.observed_asn || "-"));
           const expectedMeta = [
             item.expected_country ? `expect ${escapeHtml(String(item.expected_country))}` : "",
             item.expected_carrier ? `carrier ${escapeHtml(String(item.expected_carrier))}` : "",
@@ -2284,10 +2318,23 @@
           const desktopShot = String(item.desktop_shot || "");
           const mobileShot = String(item.mobile_shot || "");
           const noteText = item.error ? String(item.error) : String(item.notes || "clean");
+          const badges = [];
+          if (item.expected_country) {
+            badges.push(`<span class="audit-badge ${countryMismatch ? "mismatch" : "match"}">country</span>`);
+          }
+          if (item.expected_carrier) {
+            badges.push(`<span class="audit-badge ${carrierMismatch ? "mismatch" : "match"}">carrier</span>`);
+          }
+          if (item.expected_asn) {
+            badges.push(`<span class="audit-badge ${asnMismatch ? "mismatch" : "match"}">asn</span>`);
+          }
+          if (Number(item.blocked_cta || 0) > 0) {
+            badges.push(`<span class="audit-badge warn">cta blocked</span>`);
+          }
           html += "<tr>";
           html += `<td class="audit-cell-url"><a class="hacker-link" href="${safeInput}" target="_blank" rel="noopener noreferrer">${safeInput}</a></td>`;
           html += `<td><div>${safeProfile}</div><div class="tooltip-context">${expectedMeta || "direct route"}</div></td>`;
-          html += `<td><div>${observedIp}</div><div class="tooltip-context">${observedCountry} | ${observedOrg}</div></td>`;
+          html += `<td><div>${observedIp}</div><div class="tooltip-context">${observedCountry} | ${observedAsn} | ${observedOrg}</div>${badges.length ? `<div class="audit-badge-pack">${badges.join("")}</div>` : ""}</td>`;
           html += `<td class="${statusClass}">${item.error ? "error" : statusCode || "-"}</td>`;
           html += `<td><div>${Number(item.response_ms || 0)} ms</div><div class="tooltip-context">load ${Number(item.load_ms || 0)} ms</div></td>`;
           html += `<td><div>${Number(item.clickable_cta || 0)}/${Number(item.cta_total || 0)}</div><div class="tooltip-context">blocked ${Number(item.blocked_cta || 0)}</div></td>`;
@@ -2320,6 +2367,7 @@
         geoAuditObservedIp.textContent = String((network || {}).ip || "-");
         geoAuditObservedMeta.textContent = [
           String((network || {}).country || "").trim(),
+          String((network || {}).org || "").trim().match(/AS\s*\d+/i)?.[0] || "",
           String((network || {}).org || "").trim(),
           String((network || {}).city || "").trim(),
         ].filter(Boolean).join(" | ") || "No observation yet";
