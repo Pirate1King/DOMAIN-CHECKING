@@ -1407,6 +1407,58 @@ def build_output_header(header):
     return out_header
 
 
+def _append_note(existing_notes, note):
+    parts = [part.strip() for part in str(existing_notes or "").split(";") if part.strip()]
+    if note and note not in parts:
+        parts.append(note)
+    return ";".join(parts)
+
+
+def row_has_no_tracking(out_header, out_row):
+    try:
+        idx = out_header.index("notes")
+    except ValueError:
+        return False
+    return "no_tracking_links" in str(out_row[idx] or "").lower()
+
+
+def rerun_wrapped_for_no_tracking(rows, details, out_header):
+    try:
+        idx_domain = out_header.index("domain")
+        idx_notes = out_header.index("notes")
+    except ValueError:
+        return rows, details, []
+
+    updated_rows = list(rows or [])
+    updated_details = list(details or [])
+    rerun_indexes = []
+
+    for row_idx, out_row in enumerate(updated_rows):
+        if not out_row or not row_has_no_tracking(out_header, out_row):
+            continue
+        domain = str(out_row[idx_domain] or "").strip()
+        if not domain:
+            continue
+        next_row, next_detail = process_domain(
+            domain,
+            out_header,
+            ignore_https_redirect=False,
+            scan_subpages=False,
+            scan_wrapped=True,
+        )
+        next_notes = _append_note(next_row[idx_notes], "wrapped_recheck")
+        next_row[idx_notes] = next_notes
+        next_detail["notes"] = next_notes
+        updated_rows[row_idx] = next_row
+        if row_idx < len(updated_details):
+            updated_details[row_idx] = next_detail
+        else:
+            updated_details.append(next_detail)
+        rerun_indexes.append(row_idx)
+
+    return updated_rows, updated_details, rerun_indexes
+
+
 def process_domain(domain, out_header, ignore_https_redirect=False, scan_subpages=False, scan_wrapped=True):
     page = fetch_homepage_with_retry(domain)
     page_status = page["status"]
@@ -1590,7 +1642,7 @@ def analyze_tracking_links_parallel(tracking_links):
     return out
 
 
-def check_domains(domains):
+def check_domains(domains, wrapped_recheck_no_tracking=False):
     header = ["domain"]
     out_header = build_output_header(header)
     out_rows = []
@@ -1602,6 +1654,9 @@ def check_domains(domains):
         out_row, detail = process_domain(domain, out_header)
         out_rows.append(out_row)
         details.append(detail)
+
+    if wrapped_recheck_no_tracking:
+        out_rows, details, _rerun_indexes = rerun_wrapped_for_no_tracking(out_rows, details, out_header)
 
     return out_header, out_rows, details
 
