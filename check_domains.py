@@ -981,7 +981,8 @@ def build_probe_candidates(html_text, base_url, mode="wrapped"):
                     }
                 )
     candidates.sort(key=lambda x: x.get("score", 0), reverse=True)
-    return candidates
+    max_candidates = MAX_SUBPAGE_PROBES if mode == "subpage" else MAX_WRAPPER_PROBES
+    return candidates[:max_candidates]
 
 
 def discover_wrapped_tracking_links(candidate):
@@ -1050,6 +1051,8 @@ def discover_subpage_tracking_links(candidate):
 def probe_candidates(candidates, mode="wrapped"):
     if not candidates:
         return []
+    max_candidates = MAX_SUBPAGE_PROBES if mode == "subpage" else MAX_WRAPPER_PROBES
+    candidates = list(candidates[:max_candidates])
     workers = SUBPAGE_WORKERS if mode == "subpage" else WRAPPER_WORKERS
     probe_fn = discover_subpage_tracking_links if mode == "subpage" else discover_wrapped_tracking_links
     out = []

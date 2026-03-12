@@ -788,7 +788,22 @@ def run_job(job_id, domains, ignore_https_redirect=False, scan_subpages=False, s
 
                     for future in done_futures:
                         idx, domain = future_map.pop(future)
-                        row, detail = future.result()
+                        try:
+                            row, detail = future.result()
+                        except Exception as exc:
+                            row = [""] * len(header)
+                            row[header.index("domain")] = domain
+                            row[header.index("page_status")] = 0
+                            row[header.index("tracking_total")] = 0
+                            row[header.index("tracking_ok")] = 0
+                            row[header.index("tracking_error")] = 0
+                            row[header.index("notes")] = f"job_error:{exc}"
+                            detail = {
+                                "tracking_ok": [],
+                                "tracking_error": [],
+                                "page_status": 0,
+                                "notes": f"job_error:{exc}",
+                            }
                         active_domains.discard(domain)
                         with JOBS_LOCK:
                             job = JOBS.get(job_id)
